@@ -21,6 +21,9 @@ export const COMPACT_END = "# <<< dsh-enhanced:compact <<<";
 
 export const SEARCH_BEGIN = "# >>> dsh-enhanced:search >>>";
 export const SEARCH_END = "# <<< dsh-enhanced:search <<<";
+
+export const PLUGINS_BEGIN = "# >>> dsh-enhanced:plugins >>>";
+export const PLUGINS_END = "# <<< dsh-enhanced:plugins <<<";
 // Safe wiggle room around the harness default (0.8): below 50% compaction
 // churns away working context; above 75% erodes the headroom whose absence
 // once killed a session mid-compaction (413). The default stays reachable by

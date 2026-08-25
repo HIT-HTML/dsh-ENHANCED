@@ -16,6 +16,8 @@ import { handleSkills, SKILL_ACTIONS } from "./skills.js";
 import { handleMcp, MCP_ACTIONS } from "./mcp.js";
 import { handleCompact, COMPACT_ACTIONS } from "./compact.js";
 import { handleInstance, INSTANCE_ACTIONS } from "./instance.js";
+import { handlePlugins, PLUGIN_ACTIONS } from "./plugins.js";
+import { handleSessions, SESSIONS_ACTIONS } from "./sessions.js";
 import { handleSearch, SEARCH_ACTIONS, registerSearchTool, readSearchConfig } from "./search.js";
 import * as freeSearch from "./free-search-vendor.js";
 import type { Env, Handler } from "./shared.js";
@@ -24,10 +26,10 @@ import { scrubSecrets } from "./shared.js";
 // Disk-format helper embedders may reuse (test suite included).
 export { parseSkillDoc } from "./skills.js";
 
-const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...SEARCH_ACTIONS] as const;
+const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...PLUGIN_ACTIONS, ...SESSIONS_ACTIONS, ...SEARCH_ACTIONS] as const;
 
 /** Feature modules in dispatch order. */
-const HANDLERS: Handler[] = [handleSkills, handleMcp, handleCompact, handleInstance, handleSearch];
+const HANDLERS: Handler[] = [handleSkills, handleMcp, handleCompact, handleInstance, handlePlugins, handleSessions, handleSearch];
 
 export const name = "dsh-enhanced";
 export const inject = ["tools", "skills", "connection"];
@@ -83,11 +85,16 @@ export function apply(ctx: any, config?: { mcpProfiles?: string[]; allowRestart?
       "Manage agent skills and MCP servers persistently. Skills are written as " +
       "<dsh-home>/skills/<name>/SKILL.md and hot-reload. MCP servers become " +
       "@deepseek-ai/dsh-mcp-client rows in the profile patch composition; they " +
-      "take effect when the affected profile restarts. set_compact re-tunes the " +
-      "harness auto-compaction trigger within a safe 0.5–0.75 range. " +
-      "set_search manages Free Search's provider/region/market/API-key config. " +
-      "shutdown_instance / restart_instance end or relaunch the GUI process the " +
-      "plugin runs in.",
+      "take effect when the affected profile restarts. list_plugins / " +
+      "set_plugin_enabled toggle any mounted plugin per profile via the patch " +
+      "layer — profile boots watch the file and recompose live, no restart. " +
+      "set_compact re-tunes the harness auto-compaction trigger within a safe " +
+      "0.5–0.75 range. set_search manages Free Search's provider/region/market/" +
+      "API-key config. shutdown_instance / restart_instance end or relaunch the " +
+      "GUI process the plugin runs in. list_sessions / delete_sessions scan " +
+      "~/.dsh/sessions and move whole session directories into a crash-safe " +
+      "trash (open or recently-active sessions are refused); deletion is " +
+      "dry-run first and needs confirm plus the returned token.",
     parameters: {
       type: "object",
       properties: {
@@ -108,6 +115,15 @@ export function apply(ctx: any, config?: { mcpProfiles?: string[]; allowRestart?
           },
         },
         mcpName: { type: "string", description: "MCP serverName for mcp actions." },
+        pluginId: { type: "string", description: "Plugin package id for list_plugins/set_plugin_enabled (e.g. @liustack/modlens)." },
+        enabled: { type: "boolean", description: "Target state for set_plugin_enabled; defaults to true." },
+        sessionIds: { type: "array", items: { type: "string" }, description: "delete_sessions: \"workspace/sessionId\" keys from list_sessions." },
+        confirmToken: { type: "string", description: "delete_sessions: token returned by the dry run; required with confirm to execute." },
+        confirm: {
+          type: "boolean",
+          description:
+            "Must be true to disable an official @deepseek-ai/* plugin via set_plugin_enabled.",
+        },
         mcpConfig: {
           type: "object",
           description:

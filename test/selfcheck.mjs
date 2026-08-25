@@ -1,6 +1,6 @@
 // Self-check: exercises manage_skills_mcps against a fake ctx and a temp DSH_HOME.
 // Run: node test/selfcheck.mjs   (after `tsc`)
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
@@ -534,6 +534,100 @@ assert.ok(!file.includes("\n\n\n"), "no blank-line growth across cycles");
 file = writeLikeFeature(file, "");
 assert.ok(!file.includes(B), "empty rewrite removes the block");
 assert.equal(file.trimEnd(), "# user comment survives\nuser row: keep", "file clean after removal");
+
+// ── plugin manager: manifest read, own-block-only toggles, guards ────────────
+const { PLUGINS_BEGIN: PB, PLUGINS_END: PE } = await import("../dist/shared.js");
+const yamlMod = await import("js-yaml");
+const profDir = join(home, "profiles", "testprof");
+const profPatch = join(profDir, "cordis.patch.yml");
+writeFileSync(join(profDir, "package.json"), JSON.stringify({
+  name: "dsh-profile-testprof", private: true,
+  dsh: { profile: { bundles: ["@deepseek-ai/dsh-base", "@deepseek-ai/modlens", "my-plugin"] } },
+  dependencies: {},
+}));
+
+let listedPlg = await run({ action: "list_plugins" });
+assert.equal(listedPlg.plugins.length, 3, "manifest bundles listed");
+assert.ok(listedPlg.plugins.every((x) => x.profile === "testprof" && x.bundled && !x.disabled), "rows healthy by default");
+
+// non-official toggle: lands in OUR block only, file stays a valid YAML array
+let tog = await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: false });
+assert.ok(tog.success, `disable my-plugin: ${JSON.stringify(tog)}`);
+let plgPatch = readFileSync(profPatch, "utf8");
+assert.ok(plgPatch.includes(PB) && /my-plugin/.test(plgPatch.split(PB)[1].split(PE)[0]), "row inside our markers");
+assert.ok(Array.isArray(yamlMod.load(plgPatch)), "patched file remains a valid YAML array");
+listedPlg = await run({ action: "list_plugins" });
+const myRow = listedPlg.plugins.find((x) => x.id === "my-plugin");
+assert.ok(myRow.disabled && myRow.disabledByUs, "list reflects our disable");
+
+tog = await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: true });
+assert.ok(tog.success, "re-enable succeeds");
+plgPatch = readFileSync(profPatch, "utf8");
+assert.ok(!plgPatch.includes(PB), "empty rows drop the block entirely");
+
+// guards: hard-refused ids never toggle, official need confirm, unknown rejected
+for (const id of ["dsh-base", "@deepseek-ai/dsh-base", "dsh-web-app"]) {
+  const r = await run({ action: "set_plugin_enabled", pluginId: id, enabled: false, confirm: true });
+  assert.ok(r.error && r.error.includes("refusing"), `hard refusal for ${id}`);
+}
+const noConfirm = await run({ action: "set_plugin_enabled", pluginId: "@deepseek-ai/modlens", enabled: false });
+assert.ok(noConfirm.error && noConfirm.error.includes("confirm"), "official disable demands confirm");
+const unk = await run({ action: "set_plugin_enabled", pluginId: "nope", enabled: false });
+assert.ok(unk.error && unk.error.includes("not known"), "unknown id rejected");
+
+// user rows outside our block survive a toggle that also keeps prior disables
+// '@' cannot start a plain YAML scalar — real patch files quote scoped ids.
+writeFileSync(profPatch, '- id: user/thing\n  name: kept\n' + PB + '\n- id: "@deepseek-ai/modlens"\n  disabled: true\n' + PE + "\n");
+await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: false, confirm: false });
+plgPatch = readFileSync(profPatch, "utf8");
+assert.ok(plgPatch.includes("user/thing"), "user rows preserved verbatim");
+const parsed = yamlMod.load(plgPatch);
+assert.ok(parsed.some((r) => r.id === "@deepseek-ai/modlens" && r.disabled === true), "prior managed disable kept");
+assert.ok(parsed.some((r) => r.id === "my-plugin" && r.disabled === true), "new disable appended");
+
+// ── session housekeeping: scan, dry-run/token execute, refusals ──────────────
+const sesRoot = join(home, "sessions");
+const mkSes = (ws, id, bytes, ageMs) => {
+	const d = join(sesRoot, ws, `session-${id}`);
+	mkdirSync(d, { recursive: true });
+	const f = join(d, "session.jsonl.zstd");
+	writeFileSync(f, Buffer.alloc(bytes));
+	const t = new Date(Date.now() - ageMs);
+	utimesSync(f, t, t); // scan takes the newest of file/dir mtimes
+	utimesSync(d, t, t);
+};
+mkSes("ws-a", "old1", 1000, 40 * 86_400_000);
+mkSes("ws-a", "recent", 500, 60_000); // touched 1 min ago => idle-guard
+mkSes("ws-b", "old2", 2000, 10 * 86_400_000);
+
+const listedSes = await run({ action: "list_sessions" });
+assert.equal(listedSes.sessions.length, 3, "all session dirs scanned");
+assert.equal(listedSes.totalBytes, 3500, "totalBytes sums artifacts");
+
+// idle-guard and unknown-key refusals
+const guardRes = await run({ action: "delete_sessions", sessionIds: ["ws-a/recent"] });
+assert.ok(guardRes.error && guardRes.error.includes("idle"), "recent session refused");
+const unkSes = await run({ action: "delete_sessions", sessionIds: ["nope/ghost"] });
+assert.ok(unkSes.error.includes("not a known session directory"), "unknown key refused");
+
+// dry run -> wrong token rejected -> correct token moves dirs to trash
+const dry = await run({ action: "delete_sessions", sessionIds: ["ws-a/old1"] });
+assert.ok(dry.confirmToken && dry.totalBytes === 1000, "dry run returns plan + token");
+assert.ok(existsSync(join(sesRoot, "ws-a", "session-old1")), "dry run moved nothing");
+const badTok = await run({ action: "delete_sessions", sessionIds: ["ws-a/old1"], confirm: true, confirmToken: "deadbeef0000" });
+assert.ok(badTok.error && badTok.error.includes("mismatch"), "wrong token rejected");
+const exec = await run({ action: "delete_sessions", sessionIds: ["ws-a/old1"], confirm: true, confirmToken: dry.confirmToken });
+assert.ok(exec.success && exec.freedBytes === 1000, `execute: ${JSON.stringify(exec)}`);
+assert.ok(!existsSync(join(sesRoot, "ws-a", "session-old1")), "source dir gone");
+const trashEntries = readdirSync(join(home, "dsh-enhanced", "trash"));
+assert.equal(trashEntries.length, 1, "one trashed dir");
+assert.ok(readdirSync(join(home, "dsh-enhanced", "trash", trashEntries[0])).includes("session.jsonl.zstd"), "trash keeps contents");
+
+// live-in-this-process refusal via the in-memory store, when exposed
+ctx.sessions = { store: new Map([["session-old2", {}]]) };
+const liveRes = await run({ action: "delete_sessions", sessionIds: ["ws-b/old2"] });
+assert.ok(liveRes.error && liveRes.error.includes("open in this process"), "live session refused");
+assert.ok(listedSes.sessions.every((s) => !s.liveHere), "earlier scan predates store exposure");
 
 rmSync(home, { recursive: true, force: true });
 console.log("selfcheck OK");

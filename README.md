@@ -7,6 +7,8 @@ One plugin that bundles the everyday upgrades DeepSeek Harness (DSH) lacks out o
 - **Free web search** — a vendored multi-engine search provider (DuckDuckGo ×2, Bing, AnySearch, SearXNG, Mojeek-ready fallback chain + optional paid engines), configured from a Settings tab, with self-hosted-SearXNG support, live health checks, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy gateways.
 - **Skills manager** — install/edit/remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder OF skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
 - **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles.
+- **Plugin manager** — enable/disable any mounted plugin per profile by writing disable rows into the profile's patch file; boots watch that file and recompose live, so a toggle lands without a restart. Core plugins (`dsh-base`, `dsh-web-app`, `dsh-enhanced`) are hard-refused, and disabling an official `@deepseek-ai/*` plugin requires an explicit confirm.
+- **Session housekeeping** — scan stored conversation logs under `~/.dsh/sessions/` (size, age) and move whole session directories into `~/.dsh/dsh-enhanced/trash/`. Deletion is dry-run first (returns a plan + token), refuses sessions open in this process or active in the last 15 minutes (another window may still hold them), and restores by simply moving the directory back.
 - **Auto-compact tuner** — clamp the context-compaction trigger below the harness default.
 - **Instance controls** — clean shutdown/restart of the GUI process via icon buttons beside Settings in the sidebar foot.
 - **Themes** — original *ENHANCED* theme (phosphor-green terminal look, digital-rain boot intro) and a *Cyberpunk 2077* theme ported from the community theme.
@@ -65,6 +67,7 @@ No database, no state file — the user's config tree *is* the state, readable b
 
 ```
 # >>> dsh-enhanced:mcp >>>     …rows…      # <<< dsh-enhanced:mcp <<<
+# >>> dsh-enhanced:plugins >>> …rows…      # <<< dsh-enhanced:plugins <<<
 # >>> dsh-enhanced:compact >>> …row…       # <<< dsh-enhanced:compact <<<
 # >>> dsh-enhanced:search >>>  …row…       # <<< dsh-enhanced:search <<<
 ```
@@ -92,6 +95,8 @@ To add a feature: new `src/<feature>.ts` exporting `ACTIONS` + `Handler`, two li
 | mcp | `list_mcps, mcp_status, add_mcp, remove_mcp, enable_mcp, disable_mcp` | managed `:mcp:` block |
 | compact | `compact_status, set_compact` | managed `:compact:` block |
 | instance | `shutdown_instance, restart_instance` | process control only |
+| plugins | `list_plugins, set_plugin_enabled` | managed `:plugins:` block |
+| sessions | `list_sessions, delete_sessions` | moves session dirs to trash |
 | search | `list_search, set_search` | managed `:search:` block |
 
 Client-side, each feature is a *section* plugged into three registries in `core.js`:

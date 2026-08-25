@@ -249,12 +249,14 @@ window.__ModuleLoader__.load({
 				// expands the card. Sections fetch their own extra data.
 				const reload = React.useCallback(async () => {
 					try {
-						const [s, m, st] = await Promise.all([
+						const [s, m, st, pl, ses] = await Promise.all([
 							call({ action: "list_skills" }),
 							call({ action: "list_mcps" }),
 							call({ action: "mcp_status" }).catch(() => ({ servers: [] })),
+							call({ action: "list_plugins" }).catch(() => ({ plugins: [] })),
+							call({ action: "list_sessions" }).catch(() => ({ sessions: [] })),
 						]);
-						setSummary({ skills: s.skills || [], mcps: m.mcps || [] });
+						setSummary({ skills: s.skills || [], mcps: m.mcps || [], plugins: pl.plugins || [], sessions: ses.sessions || [] });
 						setStates(Object.fromEntries((st.servers || []).map((x) => [`${x.profile}/${x.serverName}`, x.state])));
 						setError(null);
 						setLoaded(true);
@@ -313,6 +315,8 @@ window.__ModuleLoader__.load({
 							call,
 							skills,
 							mcps,
+							plugins: (summary && summary.plugins) || [],
+							sessions: (summary && summary.sessions) || [],
 							states,
 							epoch,
 							reload,
