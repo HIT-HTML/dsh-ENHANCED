@@ -4,7 +4,7 @@
 
 One plugin that bundles the everyday upgrades DeepSeek Harness (DSH) lacks out of the box:
 
-- **Free web search** — a vendored multi-engine search provider (DuckDuckGo ×2, Bing, AnySearch, SearXNG, Mojeek-ready fallback chain + optional paid engines), configured from a Settings tab, with self-hosted-SearXNG support and live health checks.
+- **Free web search** — a vendored multi-engine search provider (DuckDuckGo ×2, Bing, AnySearch, SearXNG, Mojeek-ready fallback chain + optional paid engines), configured from a Settings tab, with self-hosted-SearXNG support, live health checks, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy gateways.
 - **Skills manager** — install/edit/remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder OF skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
 - **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles.
 - **Auto-compact tuner** — clamp the context-compaction trigger below the harness default.
@@ -100,7 +100,10 @@ Sections self-fetch on expand and stage edits locally; Save replays steps in ord
 a mid-batch failure keeps exactly the unapplied part staged.
 
 Secrets (API keys) are **never echoed back**: `list_search` reports `hasKey.<field>` booleans,
-key inputs start blank meaning "unchanged", and only non-blank values are written.
+key inputs start blank meaning "unchanged", and only non-blank values are written. Two more
+guards: once a key is stored the patch file is written owner-only (`0600`), and every action
+error passes shape-based **secret redaction** before reaching the model, the UI, or a log —
+so a gateway echoing your key back inside an error message gets masked.
 
 ---
 
@@ -157,6 +160,21 @@ free, always:          bing → anysearch → ddg → ddg-lite → searxng
 Time filtering (`advanced_search`) is honored by engines that support it and skips the rest.
 Results are cached per query (LRU ~50, TTL ≤5 min, configurable).
 
+### Exclusions, cooldowns, endpoint overrides
+
+- **Exclude engines** (`excludedEngines`): a CSV string or array of engine ids removed from the
+  chain entirely — typos are rejected, excluding every engine is rejected. Saved in the
+  `:search:` block; takes effect after a profile restart.
+- **Failure cooldowns with memory** (`src/cooldown.ts`): quota-exhaustion failures put an engine
+  on a 12 h cooldown, 429/rate-limit wordings on 15 min. State persists to disk
+  (`~/.dsh/dsh-enhanced/cooldown-state.json`), so restarts don't re-burn dead quota; generic
+  network errors and missing keys never cool anything down. Saving search config wipes stale
+  verdicts (your keys or endpoints changed).
+- **Endpoint overrides** (`exaBaseUrl`, `tavilyBaseUrl`, `keenableBaseUrl`): point keyed engines
+  at a self-hosted or proxy gateway; http/https only, blank clears.
+- Fallbacks are visible: a result that landed on a non-preferred engine carries a structured
+  `_fallback {from, to, reason}` twin alongside the human-readable Note.
+
 ### SearXNG instances (self-hosted path)
 
 Public SearXNG instances rate-limit the JSON API to death; run your own:
@@ -211,8 +229,12 @@ npm run selfcheck    # offline end-to-end test, no frameworks
 
 **selfcheck** (`test/selfcheck.mjs`) builds a temp `$DSH_HOME`, runs the real handlers against a
 stubbed plugin context (captured registrations instead of live services), and asserts disk output:
-managed-block round-trips, secret preservation, YAML shapes, name validation, provider registration.
+managed-block round-trips, block-surgery edge cases (torn blocks, CRLF, rewrite cycles), secret
+preservation, YAML shapes, name validation, provider registration.
 It is the regression gate — extend it when you add behavior.
+
+**CI** (`.github/workflows/ci.yml`): every push to `main` and every PR runs frozen install → build →
+selfcheck on Node 22, gating the shipped prebuilt artifacts.
 
 **Lab bench** (second live GUI without touching your main one):
 
@@ -246,7 +268,7 @@ managed block via `splitBlock`/`writeFile`, guard-rails server-side. Then one `h
 - [ ] Lab bench smoke: bridge query with preferred engine + one fallback
 - [ ] `dist/` and `client.js` are committed artifacts here — make sure they're fresh
 - [ ] No machine-specific paths or secrets in tracked files (`git grep -E "/Users/|sk-[A-Za-z0-9]"`)
-- [ ] Bump `package.json` version
+- [ ] Bump `package.json` version, tag `vX.Y.Z` matching it, push commits + tag together
 
 ---
 
