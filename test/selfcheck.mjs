@@ -565,8 +565,9 @@ assert.ok(tog.success, "re-enable succeeds");
 plgPatch = readFileSync(profPatch, "utf8");
 assert.ok(!plgPatch.includes(PB), "empty rows drop the block entirely");
 
-// guards: hard-refused ids never toggle, official need confirm, unknown rejected
-for (const id of ["dsh-base", "@deepseek-ai/dsh-base", "dsh-web-app"]) {
+// guards: hard-refused ids never toggle (incl. dsh-enhanced itself), official
+// need confirm, unknown rejected
+for (const id of ["dsh-base", "@deepseek-ai/dsh-base", "dsh-web-app", "dsh-enhanced", "@deepseek-ai/dsh-enhanced"]) {
   const r = await run({ action: "set_plugin_enabled", pluginId: id, enabled: false, confirm: true });
   assert.ok(r.error && r.error.includes("refusing"), `hard refusal for ${id}`);
 }
