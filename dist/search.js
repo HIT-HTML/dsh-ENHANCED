@@ -10,8 +10,10 @@
  * Secrets are never echoed to the client; a left-blank key field preserves the
  * existing value (clearing a key = use Free Search's own UI).
  */
-import { writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import yaml from "js-yaml";
+import { removeCooldownState } from "./cooldown.js";
+import { ALL_ENGINES } from "./free-search-vendor.js";
 import { SEARCH_BEGIN, SEARCH_END, patchPath, readPatch, splitBlock, splitInner, } from "./shared.js";
 export const SEARCH_ACTIONS = ["list_search", "set_search"];
 const KEY_FIELDS = ["exaApiKey", "tavilyApiKey", "keenableApiKey", "perplexityApiKey", "deepseekApiKey"];
@@ -37,6 +39,9 @@ async function writeSearch(profile, cfg) {
     const block = `${SEARCH_BEGIN}\n${yaml.dump([entry], { lineWidth: 0, noRefs: true })}${SEARCH_END}`;
     const { head, tail } = splitBlock(text, SEARCH_BEGIN, SEARCH_END);
     await writeFile(patchPath(profile), (head + tail).trimEnd() + "\n" + block + "\n", "utf8");
+    // The managed block may hold API keys: keep the whole patch owner-only
+    // (best-effort — Windows has no POSIX modes).
+    await chmod(patchPath(profile), 0o600).catch(() => { });
 }
 /** Parsed managed-block config for profile index 0 (engine boot config). */
 export async function readSearchConfig(profile) {
@@ -81,6 +86,10 @@ export const handleSearch = async function (action, args, env) {
                 bingMarket: cfg?.bingMarket ?? "zh-CN",
                 searxngInstances: instances.join(", "),
                 instanceStatus: instances.length ? await probeInstances(instances) : [],
+                tavilyBaseUrl: cfg?.tavilyBaseUrl ?? "",
+                exaBaseUrl: cfg?.exaBaseUrl ?? "",
+                keenableBaseUrl: cfg?.keenableBaseUrl ?? "",
+                excludedEngines: Array.isArray(cfg?.excludedEngines) ? cfg.excludedEngines : [],
                 hasKey,
             };
         }
@@ -108,6 +117,32 @@ export const handleSearch = async function (action, args, env) {
                     .filter((s) => /^https?:\/\//i.test(s));
                 if (instances.length)
                     cfg.searxngInstances = instances;
+                // Optional endpoint overrides for keyed engines (self-hosted/proxy
+                // gateways). Omitted field => keep; blank => clear back to built-in.
+                for (const f of ["tavilyBaseUrl", "exaBaseUrl", "keenableBaseUrl"]) {
+                    if (!(f in args))
+                        continue;
+                    const v = String(args[f] ?? "").trim();
+                    if (!v)
+                        continue; // cleared: the fresh cfg simply omits it
+                    if (!/^https?:\/\//i.test(v))
+                        throw new Error(`${f} must be a full http(s) URL`);
+                    cfg[f] = v.replace(/\/+$/, "");
+                }
+                // Engines dropped from the fallback chain entirely (Search settings
+                // checkboxes or CSV). Unknown names are rejected loudly — a typo
+                // would silently narrow the chain.
+                const rawEx = Array.isArray(args.excludedEngines)
+                    ? args.excludedEngines.map(String)
+                    : String(args.excludedEngines ?? "").split(/[\s,]+/);
+                const excluded = rawEx.map((s) => s.trim()).filter(Boolean);
+                const unknownEx = excluded.filter((eng) => !ALL_ENGINES.includes(eng));
+                if (unknownEx.length)
+                    throw new Error(`unknown engines: ${unknownEx.join(", ")} (valid: ${ALL_ENGINES.join(", ")})`);
+                if (excluded.length >= ALL_ENGINES.length)
+                    throw new Error("cannot exclude every engine — search needs at least one");
+                if (excluded.length)
+                    cfg.excludedEngines = excluded;
                 // Blank key field => keep the current value (never echo secrets).
                 for (const k of KEY_FIELDS) {
                     const v = args[k];
@@ -118,6 +153,8 @@ export const handleSearch = async function (action, args, env) {
                 }
                 await writeSearch(profile, cfg);
             }
+            // Config changed ⇒ stored cooldown verdicts may be stale (e.g. a key was just fixed).
+            removeCooldownState();
             return { success: true, message: `Search config written to profiles: ${targets.join(", ")}. Restart each profile to apply.` };
         }
         default:

@@ -9,6 +9,8 @@ import { homedir } from "node:os";
 export const DSH_HOME = process.env.DSH_HOME || join(homedir(), ".dsh");
 export const SKILLS_DIR = join(DSH_HOME, "skills");
 export const PROFILES_DIR = join(DSH_HOME, "profiles");
+/** Plugin-owned runtime state (engine cooldowns); follows the SKILLS_DIR pattern. */
+export const ENHANCED_STATE_DIR = join(DSH_HOME, "dsh-enhanced");
 export const MCP_BEGIN = "# >>> dsh-enhanced:mcp >>>";
 export const MCP_END = "# <<< dsh-enhanced:mcp <<<";
 export const COMPACT_BEGIN = "# >>> dsh-enhanced:compact >>>";
@@ -58,4 +60,24 @@ export async function readPatch(profile) {
     catch {
         return "";
     }
+}
+// ── Secret redaction (shape set ported from @liustack/modsearch) ──────────────
+// Mask credential-shaped strings before error text reaches the model, the UI,
+// or a log: gateway bodies and subprocess stderr quote foreign text that may
+// embed secrets nobody declared as a key. Shape-based, so it works even when
+// nothing was registered. The one honest limit (same as modsearch's): a secret
+// with no recognizable shape in a non-secret field cannot be told from data.
+const SECRET_SHAPES = [
+    /\b(?:sk|rk|pk|xox[a-z])-[A-Za-z0-9_-]{12,}\b/g, // OpenAI/Anthropic/Stripe/Slack style
+    /\bAIza[A-Za-z0-9_-]{20,}\b/g, // Google API keys
+    /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub tokens
+    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g, // JWTs
+    /\b(?:bearer|authorization)\b[=:\s]+"?[A-Za-z0-9._~+/-]{12,}"?/gi, // auth headers
+    /\b(?:token|api[-_]?key)\b\s*[=:]\s*"?[A-Za-z0-9._~+/-]{12,}"?/gi, // labeled keys
+];
+export function scrubSecrets(text) {
+    let out = String(text ?? "");
+    for (const shape of SECRET_SHAPES)
+        out = out.replace(shape, "[redacted]");
+    return out;
 }

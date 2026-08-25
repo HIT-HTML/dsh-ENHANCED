@@ -1,6 +1,8 @@
 export declare const DSH_HOME: string;
 export declare const SKILLS_DIR: string;
 export declare const PROFILES_DIR: string;
+/** Plugin-owned runtime state (engine cooldowns); follows the SKILLS_DIR pattern. */
+export declare const ENHANCED_STATE_DIR: string;
 export declare const MCP_BEGIN = "# >>> dsh-enhanced:mcp >>>";
 export declare const MCP_END = "# <<< dsh-enhanced:mcp <<<";
 export declare const COMPACT_BEGIN = "# >>> dsh-enhanced:compact >>>";
@@ -44,4 +46,5 @@ export declare function splitBlock(text: string, begin: string, end: string): {
 /** Return the managed-block inner text (between begin and end), or "" if absent. */
 export declare function splitInner(text: string, begin: string, end: string): string;
 export declare function readPatch(profile: string): Promise<string>;
+export declare function scrubSecrets(text: unknown): string;
 //# sourceMappingURL=shared.d.ts.map

@@ -18,6 +18,7 @@ import { handleCompact, COMPACT_ACTIONS } from "./compact.js";
 import { handleInstance, INSTANCE_ACTIONS } from "./instance.js";
 import { handleSearch, SEARCH_ACTIONS, registerSearchTool, readSearchConfig } from "./search.js";
 import * as freeSearch from "./free-search-vendor.js";
+import { scrubSecrets } from "./shared.js";
 // Disk-format helper embedders may reuse (test suite included).
 export { parseSkillDoc } from "./skills.js";
 const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...SEARCH_ACTIONS];
@@ -64,7 +65,9 @@ export function apply(ctx, config) {
             return { error: `Unknown action: ${args.action}` };
         }
         catch (error) {
-            return { error: error instanceof Error ? error.message : String(error) };
+            // Single chokepoint for ALL module action errors: scrub credential shapes
+            // before any engine/gateway text reaches the model or the settings card.
+            return { error: scrubSecrets(error instanceof Error ? error.message : String(error)) };
         }
     }
     const unregister = ctx.tools.register({
@@ -119,6 +122,10 @@ export function apply(ctx, config) {
                 keenableApiKey: { type: "string", description: "Keenable API key (secret) for set_search; blank preserves the existing value." },
                 perplexityApiKey: { type: "string", description: "Perplexity API key (secret) for set_search; blank preserves the existing value." },
                 deepseekApiKey: { type: "string", description: "DeepSeek API key (secret) for set_search; blank preserves the existing value." },
+                tavilyBaseUrl: { type: "string", description: "Optional full Tavily endpoint override for set_search (self-hosted/proxy gateway); blank clears." },
+                exaBaseUrl: { type: "string", description: "Optional full Exa endpoint override for set_search; blank clears." },
+                keenableBaseUrl: { type: "string", description: "Optional full Keenable endpoint override for set_search; blank clears." },
+                excludedEngines: { type: "string", description: "CSV or array of engines to drop from the fallback chain for set_search (e.g. \"ddg, perplexity\"); empty clears." },
             },
             required: ["action"],
         },

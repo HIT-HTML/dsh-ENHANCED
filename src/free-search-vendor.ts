@@ -14,11 +14,15 @@
  *     (all three avoid collisions when the standalone plugin is loaded too)
  *   - installSettingsSection() call removed: dsh-enhanced's own Search tab
  *     owns configuration UX; engine config arrives via apply(scope, cfg)
+ *   - cooldown memory added on top (src/cooldown.ts): quota/rate-limit failures
+ *     park an engine for a while; upstream has no equivalent
  */
 // @ts-nocheck
 import { SettingsConflictError, installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
+import { activeCooldowns, clearCooldown, loadCooldownState, pruneCooldowns, recordCooldown, saveCooldownState } from "./cooldown.js";
+import { scrubSecrets } from "./shared.js";
 
 const DDG_HTML_URL = "https://html.duckduckgo.com/html/";
 const DDG_LITE_URL = "https://lite.duckduckgo.com/lite/";
@@ -34,6 +38,41 @@ const FREE_SEARCH_NS = settingsNamespace("enhanced-free-search");
 const BRIDGE_PREFIX = "/api/dsh-enhanced-free-search";
 const FREE_ENGINES = ["ddg", "ddg-lite", "bing", "searxng", "anysearch"];
 const ALL_ENGINES = ["ddg", "ddg-lite", "bing", "searxng", "anysearch", "exa", "tavily", "keenable", "perplexity", "deepseek-official"];
+
+// Chain-order pools: keyed/paid engines try before free scrapers; TIME_ENGINES
+// are the ones that can actually honor a time filter.
+const PAID_ENGINES = ["exa", "tavily", "keenable", "perplexity", "deepseek-official"];
+const FREE_ENGINE_ORDER = ["bing", "anysearch", "ddg", "ddg-lite", "searxng"];
+const TIME_ENGINES = ["tavily", "exa", "keenable", "searxng", "ddg", "ddg-lite"];
+
+/**
+ * Pure fallback-chain builder (exported for the selfcheck): preferred engine
+ * first, then paid, then free. With a time filter, time-capable engines sort
+ * ahead. Excluded engines (Search settings) and cooling engines (cooldown
+ * state) never enter the chain; a blocked preferred engine is reported via
+ * preferredSkippedReason instead of being attempted ("excluded" and
+ * "cooldown" beat "time-filter" in reporting precedence).
+ */
+function buildChain(preferred, cfg, timeRange, cooling) {
+  const excluded = Array.isArray(cfg?.excludedEngines) ? cfg.excludedEngines : [];
+  const cool = cooling instanceof Map ? cooling : new Map();
+  const blocked = (e) => excluded.includes(e) || cool.has(e);
+  let preferredSkippedReason = null;
+  if (blocked(preferred)) preferredSkippedReason = excluded.includes(preferred) ? "excluded" : "cooldown";
+  else if (timeRange && !TIME_ENGINES.includes(preferred)) preferredSkippedReason = "time-filter";
+
+  const pool = [...PAID_ENGINES, ...FREE_ENGINE_ORDER].filter((e) => !blocked(e) && e !== preferred);
+  let chain;
+  if (timeRange) {
+    const preferredFirst = blocked(preferred) || !TIME_ENGINES.includes(preferred) ? [] : [preferred];
+    const otherTime = TIME_ENGINES.filter((e) => !blocked(e) && e !== preferred);
+    const noTime = pool.filter((e) => !TIME_ENGINES.includes(e));
+    chain = [...preferredFirst, ...otherTime, ...noTime];
+  } else {
+    chain = [...(blocked(preferred) ? [] : [preferred]), ...pool];
+  }
+  return { chain, preferredSkippedReason };
+}
 
 // 当前插件版本（发布时与 package.json 同步）
 // 检查更新的 npm registry 元数据地址（dsh-free-search 是 npmjs 上的公开包）
@@ -672,7 +711,7 @@ async function searchPlatform(platform, query, maxResults, signal, lang) {
 //#endregion
 
 //#region paid engines (exa / tavily / perplexity / deepseek-official)
-async function searchExa(query, maxResults, apiKey, timeRange, signal) {
+async function searchExa(query, maxResults, apiKey, timeRange, signal, baseUrl) {
   if (!apiKey) throw new Error("Exa search requires EXA_API_KEY");
   const body = {
     query,
@@ -685,7 +724,7 @@ async function searchExa(query, maxResults, apiKey, timeRange, signal) {
     if (timeRange.after) body.startPublishedDate = timeRange.after;
     else if (timeRange.days !== undefined) body.startPublishedDate = isoDaysAgo(timeRange.days);
   }
-  const response = await fetch("https://api.exa.ai/search", {
+  const response = await fetch(baseUrl || "https://api.exa.ai/search", {
     method: "POST",
     redirect: "error",
     headers: {
@@ -721,7 +760,7 @@ async function searchExa(query, maxResults, apiKey, timeRange, signal) {
 }
 
 // Tavily: 无 key 走 keyless（免费匿名额度），有 key 走账号档（Bearer）
-async function searchTavily(query, maxResults, apiKey, timeRange, signal) {
+async function searchTavily(query, maxResults, apiKey, timeRange, signal, baseUrl) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   const onAbort = () => controller.abort();
@@ -738,7 +777,7 @@ async function searchTavily(query, maxResults, apiKey, timeRange, signal) {
       const tr = approximateTimeRange(timeRange.days ?? 7);
       if (tr) body.time_range = tr;
     }
-    response = await fetch(TAVILY_URL, {
+    response = await fetch(baseUrl || TAVILY_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -804,7 +843,7 @@ function extractKeenableSources(text, maxResults) {
   return uniqueSources(sources, maxResults ?? 10);
 }
 
-async function searchKeenableREST(query, maxResults, apiKey, timeRange, signal) {
+async function searchKeenableREST(query, maxResults, apiKey, timeRange, signal, baseUrl) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   const onAbort = () => controller.abort();
@@ -817,7 +856,7 @@ async function searchKeenableREST(query, maxResults, apiKey, timeRange, signal) 
       if (timeRange.after) body.published_after = timeRange.after;
       else if (timeRange.days !== undefined) body.published_after = formatKeenableRelative(timeRange.days);
     }
-    response = await fetch(KEENABLE_URL, {
+    response = await fetch(baseUrl || KEENABLE_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(body),
@@ -890,8 +929,8 @@ async function searchKeenableMCP(query, maxResults, timeRange, signal) {
   return { sources: extractKeenableSources(text, maxResults ?? 10), truncated: false };
 }
 
-async function searchKeenable(query, maxResults, apiKey, timeRange, signal) {
-  if (apiKey) return searchKeenableREST(query, maxResults, apiKey, timeRange, signal);
+async function searchKeenable(query, maxResults, apiKey, timeRange, signal, baseUrl) {
+  if (apiKey) return searchKeenableREST(query, maxResults, apiKey, timeRange, signal, baseUrl);
   return searchKeenableMCP(query, maxResults, timeRange, signal);
 }
 
@@ -1211,6 +1250,14 @@ const Config = z.object({
   region: z.string(),
   bingMarket: z.string().default("zh-CN"),
   searxngInstances: z.array(z.string()),
+  // Optional full-endpoint overrides for keyed engines (self-hosted/proxy gateways).
+  // ponytail: plain z.string() — this schemastery build has no .optional(); the
+  // field is simply absent when unset.
+  tavilyBaseUrl: z.string(),
+  exaBaseUrl: z.string(),
+  keenableBaseUrl: z.string(),
+  // Engines never tried by the fallback chain (see buildChain).
+  excludedEngines: z.array(z.string()),
   platforms: z.array(z.string()).default(["github", "v2ex", "bilibili", "reddit", "hn", "stackoverflow", "wikipedia", "npm"]),
   exaApiKey: z.string().role("secret"),
   tavilyApiKey: z.string().role("secret"),
@@ -1223,6 +1270,19 @@ function apply(ctx, config) {
   let current = () => config ?? {};
   const logger = ctx.logger;
   const credentials = ctx.get("credentials");
+
+  // Cooldown persistence degrades to a warning: a failed state write must
+  // never break the search path (ported modsearch 5.2.0 lesson).
+  const persistCooldown = (state) => {
+    try {
+      pruneCooldowns(state);
+      saveCooldownState(state);
+    } catch (error) {
+      logger.warn(
+        `free-search: cooldown state write failed (continuing without memory): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
 
   // 系统提示词动态刷新：设置变更时重新生成，避免显示旧引擎
   let refreshPrompt = null;
@@ -1286,32 +1346,16 @@ function apply(ctx, config) {
         if (hit) searchCache.delete(cacheKey);
       }
 
-      // 统一引擎链：首选优先，然后其他付费引擎（有 key 的优先尝试），最后免费引擎
-      const paidEngines = ["exa", "tavily", "keenable", "perplexity", "deepseek-official"];
-      const freeEngines = ["bing", "anysearch", "ddg", "ddg-lite", "searxng"];
-      // 支持 time_range 过滤的引擎：tavily / exa / keenable / searxng / ddg / ddg-lite
-      const timeEngines = ["tavily", "exa", "keenable", "searxng", "ddg", "ddg-lite"];
-      let chain;
+      // 统一引擎链（buildChain 纯函数）：首选优先，然后其他付费引擎（有 key 的优先
+      // 尝试），最后免费引擎。被 Search 设置排除、或冷却中的引擎不进链。
+      // ponytail: 冷却状态每 query 读一次盘（<1KB JSON）——不做内存缓存就没有跨进程失效问题。
+      const coolState = loadCooldownState();
+      const cooling = activeCooldowns(coolState);
+      const { chain, preferredSkippedReason } = buildChain(preferred, cfg, timeRange, cooling);
       // 首选引擎被跳过的原因（用于生成准确的 Note，避免误导 agent/用户）：
-      //  - "time-filter"：带 timeRange 且首选引擎不支持时间过滤（根本没尝试）
-      //  - "failed"：首选引擎确实被尝试但失败（缺 key / 401 / 限流 / 0 结果 / 网络）
-      //  - null：首选引擎成功或无回退
-      let preferredSkippedReason = null;
-      if (timeRange) {
-        // 有时间过滤需求时，把支持过滤的引擎排前面（首选引擎若支持仍优先）
-        const preferredFirst = [preferred].filter((e) => timeEngines.includes(e));
-        const otherTime = timeEngines.filter((e) => e !== preferred);
-        const noTime = [...paidEngines, ...freeEngines].filter((e) => !timeEngines.includes(e) && e !== preferred);
-        chain = [...preferredFirst, ...otherTime, ...noTime];
-        if (!timeEngines.includes(preferred)) {
-          // 首选引擎不支持时间过滤 → 它不在链里，不会被尝试（这不等于失败）
-          preferredSkippedReason = "time-filter";
-        }
-      } else {
-        const othersPaid = paidEngines.filter((e) => e !== preferred);
-        const othersFree = freeEngines.filter((e) => e !== preferred);
-        chain = [preferred, ...othersPaid, ...othersFree];
-      }
+      //  - "time-filter"/"cooldown"/"excluded"：首选根本没进链（见 buildChain）
+      //  - preferredFailure 非空：首选确实被尝试但失败（缺 key / 401 / 限流 / 0 结果 / 网络）
+      //  - null：首选成功或无回退
 
       let lastError = null;
       let usedEngine = null;
@@ -1343,18 +1387,18 @@ function apply(ctx, config) {
             // exa：有 key 走 REST，无 key 走 keyless MCP（免费）
             const key = await resolveApiKey("EXA_API_KEY", "exaApiKey");
             if (key) {
-              result = await searchExa(request.query, request.maxResults, key, timeRange, effSignal);
+              result = await searchExa(request.query, request.maxResults, key, timeRange, effSignal, cfg.exaBaseUrl);
             } else {
               result = await searchExaMCP(request.query, request.maxResults, effSignal);
             }
           } else if (engine === "tavily") {
             // tavily：有 key 走账号档，无 key 走 keyless（免费匿名额度）
             const key = await resolveApiKey("TAVILY_API_KEY", "tavilyApiKey");
-            result = await searchTavily(request.query, request.maxResults, key, timeRange, effSignal);
+            result = await searchTavily(request.query, request.maxResults, key, timeRange, effSignal, cfg.tavilyBaseUrl);
           } else if (engine === "keenable") {
             // keenable：有 key 走 REST，无 key 走 keyless MCP（免费）
             const key = await resolveApiKey("KEENABLE_API_KEY", "keenableApiKey");
-            result = await searchKeenable(request.query, request.maxResults, key, timeRange, effSignal);
+            result = await searchKeenable(request.query, request.maxResults, key, timeRange, effSignal, cfg.keenableBaseUrl);
           } else if (engine === "perplexity") {
             const key = await resolveApiKey("PERPLEXITY_API_KEY", "perplexityApiKey");
             if (!key) {
@@ -1379,6 +1423,8 @@ function apply(ctx, config) {
 
           if (result.sources.length > 0) {
             usedEngine = engine;
+            // 成功即视为恢复：清除该引擎的冷却记录（有记录才写盘）
+            if (clearCooldown(coolState, engine)) persistCooldown(coolState);
             // 统一清洗 snippet：去登录/付费墙/订阅噪音，折叠空白（有值的才处理，保持 lossless JSON）
             result.sources = result.sources.map((s) =>
               s.snippet ? { ...s, snippet: cleanSnippet(s.snippet) } : s
@@ -1387,11 +1433,22 @@ function apply(ctx, config) {
             if (engine !== preferred) {
               if (preferredSkippedReason === "time-filter") {
                 result.content = `Note: ${preferred} does not support time filtering (timeRange=${timeRangeLabel}), using ${engine}.`;
+              } else if (preferredSkippedReason === "cooldown") {
+                result.content = `Note: ${preferred} is cooling down (${cooling.get(preferred)?.reason ?? "quota or rate limit"}), using ${engine}.`;
+              } else if (preferredSkippedReason === "excluded") {
+                result.content = `Note: ${preferred} is disabled in Search settings, using ${engine}.`;
               } else if (preferredFailure) {
                 result.content = `Note: ${preferred} unavailable or failed (${preferredFailure}), using ${engine}.`;
               } else {
                 result.content = `Note: ${preferred} unavailable or failed, using ${engine}.`;
               }
+              // Structured twin of the Note for tool callers (lossless JSON:
+              // only present when a fallback actually happened).
+              result._fallback = {
+                from: preferred,
+                to: engine,
+                reason: preferredSkippedReason ?? "failed",
+              };
             }
             // 写入缓存（只缓存成功结果，失败走 throw 天然不缓存）
             const cached = { ...result, provider: engine, engine: engine };
@@ -1415,11 +1472,17 @@ function apply(ctx, config) {
         } catch (error) {
           lastError = error;
           const message = error instanceof Error ? error.message : String(error);
+          if (recordCooldown(coolState, engine, message)) persistCooldown(coolState);
           if (engine === preferred) preferredFailure = message;
           logger.warn(`free-search: engine "${engine}" failed (${message}), trying next engine`);
         }
       }
-      throw lastError ?? new Error("all search engines failed");
+      // Chain exit may quote foreign text (gateway bodies); scrub before it surfaces.
+      if (lastError instanceof Error) {
+        lastError.message = scrubSecrets(lastError.message);
+        throw lastError;
+      }
+      throw new Error(scrubSecrets(String(lastError)) || "all search engines failed");
     },
   };
 
@@ -1468,16 +1531,16 @@ function apply(ctx, config) {
           return await searchAnysearch(q, 2);
         case "exa": {
           const key = await resolveApiKey("EXA_API_KEY", "exaApiKey");
-          if (key) return await searchExa(q, 2, key, tr);
+          if (key) return await searchExa(q, 2, key, tr, undefined, cfg.exaBaseUrl);
           return await searchExaMCP(q, 2);
         }
         case "tavily": {
           const key = await resolveApiKey("TAVILY_API_KEY", "tavilyApiKey");
-          return await searchTavily(q, 2, key, tr);
+          return await searchTavily(q, 2, key, tr, undefined, cfg.tavilyBaseUrl);
         }
         case "keenable": {
           const key = await resolveApiKey("KEENABLE_API_KEY", "keenableApiKey");
-          return await searchKeenable(q, 2, key, tr);
+          return await searchKeenable(q, 2, key, tr, undefined, cfg.keenableBaseUrl);
         }
         case "perplexity": {
           const key = await resolveApiKey("PERPLEXITY_API_KEY", "perplexityApiKey");
@@ -1510,7 +1573,7 @@ function apply(ctx, config) {
         truncated: result.truncated ?? false,
       };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, error: scrubSecrets(error instanceof Error ? error.message : String(error)) };
     }
   };
 
@@ -1718,6 +1781,16 @@ function apply(ctx, config) {
               properties: {
                 provider: { type: "string" },
                 content: { type: "string" },
+                status: { type: "string", enum: ["ok", "degraded"] },
+                fallback: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    from: { type: "string" },
+                    to: { type: "string" },
+                    reason: { type: "string" },
+                  },
+                },
                 sources: {
                   type: "array",
                   items: {
@@ -1735,7 +1808,8 @@ function apply(ctx, config) {
             },
             render(args, value) {
               const lines = value.sources.map((s, i) => `- [${s.title ?? s.url}](${s.url})${s.snippet ? ` - ${s.snippet.slice(0, 120)}` : ""}${s.publishedAt ? ` (${s.publishedAt})` : ""}`);
-              return `Search (${value.provider}${args.timeRange ? `, timeRange=${args.timeRange}` : ""}):\n${lines.join("\n") || "No results found."}${value.content ? `\n\n${value.content}` : ""}`;
+              const head = value.status === "degraded" ? "[degraded] " : "";
+              return `${head}Search (${value.provider}${args.timeRange ? `, timeRange=${args.timeRange}` : ""}):\n${lines.join("\n") || "No results found."}${value.content ? `\n\n${value.content}` : ""}`;
             },
           },
           async execute(args) {
@@ -1749,7 +1823,7 @@ function apply(ctx, config) {
             if (args.engine && ALL_ENGINES.includes(args.engine)) request.engine = args.engine;
             const result = await provider.search(request);
             // lossless JSON 不允许 undefined 字段：按存在的值构造对象，缺字段直接省略
-            return {
+            const out = {
               provider: result.provider ?? result._provider ?? "bing",
               content: typeof result.content === "string" ? result.content : "",
               sources: (result.sources ?? []).map((s) => {
@@ -1763,6 +1837,14 @@ function apply(ctx, config) {
                 return source;
               }),
             };
+            // Structured fallback status (agent-readable twin of result.content's Note).
+            if (result._fallback) {
+              out.status = "degraded";
+              out.fallback = { from: result._fallback.from, to: result._fallback.to, reason: result._fallback.reason };
+            } else {
+              out.status = "ok";
+            }
+            return out;
           },
           finalizeContent(exec, result) {
             // Tool-result content must be an array of content blocks, not a raw string.
@@ -1828,4 +1910,4 @@ function apply(ctx, config) {
   });
 }
 
-export { apply, Config, ALL_ENGINES, PLATFORMS, makeBridgeRoutes };
+export { apply, Config, ALL_ENGINES, PLATFORMS, makeBridgeRoutes, buildChain };

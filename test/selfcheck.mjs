@@ -348,5 +348,134 @@ for (const st of ls.instanceStatus) {
 const srch = await tools["dsh_search"].execute({ query: "hello" });
 assert.equal(srch.ok, false, "dsh_search errors when no provider registered");
 
+// ── T1 hardening: engine cooldown memory ──────────────────────────────────────
+const cd = await import("../dist/cooldown.js");
+assert.equal(cd.classifyFailure("firecrawl is out of credits: quota exceeded")?.kind, "quota", "quota wording classified");
+assert.equal(cd.classifyFailure("Exa API error (HTTP 429)")?.kind, "ratelimit", "HTTP 429 classified");
+assert.equal(cd.classifyFailure("DuckDuckGo is rate-limited right now (anti-bot challenge)")?.kind, "ratelimit", "DDG anti-bot classified");
+assert.equal(cd.classifyFailure("connection error: socket hang up"), null, "generic network errors never cool down");
+assert.equal(cd.classifyFailure("Perplexity search requires PERPLEXITY_API_KEY"), null, "missing key never cools down");
+const cst = cd.emptyState();
+assert.equal(cd.recordCooldown(cst, "tavily", "tavily is out of credits", 1_000), true, "quota failure records an entry");
+assert.ok(Date.parse(cst.engines.tavily.until) > 1_000, "until is a future ISO timestamp");
+assert.equal(cd.activeCooldowns(cst, 2_000).has("tavily"), true, "engine active inside window");
+assert.equal(cd.activeCooldowns(cst, Date.parse(cst.engines.tavily.until) + 1).size, 0, "expired entries invisible");
+assert.equal(cd.clearCooldown(cst, "tavily"), true, "clear removes entry");
+// persistence round-trip under the temp DSH_HOME
+cd.recordCooldown(cst, "exa", "exa quota exhausted", Date.now());
+cd.saveCooldownState(cst);
+assert.equal(cd.loadCooldownState().engines.exa.until, cst.engines.exa.until, "state survives restart-shaped reload");
+cd.removeCooldownState();
+assert.equal(Object.keys(cd.loadCooldownState().engines).length, 0, "remove clears state");
+// chain building: exclusions/cooldowns filter, time ordering preserved
+const bc = vendor.buildChain;
+let ch = bc("bing", {}, undefined, new Map());
+assert.equal(ch.chain[0], "bing", "preferred leads the free tier");
+ch = bc("bing", { excludedEngines: ["bing"] }, undefined, new Map());
+assert.equal(ch.preferredSkippedReason, "excluded", "excluded preferred reports reason");
+assert.equal(ch.chain.includes("bing"), false, "excluded preferred leaves the chain");
+ch = bc("bing", {}, undefined, new Map([["bing", { until: new Date(Date.now() + 60_000).toISOString(), reason: "q" }]]));
+assert.equal(ch.preferredSkippedReason, "cooldown", "cooling preferred reports reason");
+assert.equal(ch.chain.includes("bing"), false, "cooling preferred leaves the chain");
+ch = bc("perplexity", {}, { days: 7 }, new Map());
+assert.equal(ch.preferredSkippedReason, "time-filter", "time-incapable preferred skipped");
+assert.equal(ch.chain.includes("perplexity"), false, "skipped preferred not attempted");
+ch = bc("bing", {}, { days: 7 }, new Map());
+assert.ok(ch.chain.indexOf("tavily") < ch.chain.indexOf("perplexity"), "time-capable engines sort ahead");
+ch = bc("bing", { excludedEngines: ["ddg"] }, { days: 7 }, new Map());
+assert.equal(ch.chain.includes("ddg"), false, "excluded engine absent under timeRange too");
+// set_search invalidates stored cooldown verdicts (config/keys changed)
+mkdirSync(join(home, "dsh-enhanced"), { recursive: true });
+writeFileSync(
+	join(home, "dsh-enhanced", "cooldown-state.json"),
+	JSON.stringify({ engines: { bing: { until: new Date(Date.now() + 3_600_000).toISOString(), reason: "stale" } } }),
+);
+const inv = await run({ action: "set_search", provider: "bing" });
+assert.ok(inv.success, `invalidating set_search: ${JSON.stringify(inv)}`);
+assert.equal(Object.keys(cd.loadCooldownState().engines).length, 0, "set_search wiped stale cooldowns");
+
+// ── T2 hardening: secret redaction at error boundaries ────────────────────────
+const { scrubSecrets } = await import("../dist/shared.js");
+assert.equal(scrubSecrets("gateway said sk-live-abc123DEF456ghi789 down"), "gateway said [redacted] down", "OpenAI-shaped key masked");
+assert.equal(scrubSecrets("token ghp_A1b2C3d4E5f6G7h8I9j0K1l2 ok"), "token [redacted] ok", "GitHub token masked");
+assert.equal(scrubSecrets("AIzaSyA1234567890abcdefghijklmnopqrstuv"), "[redacted]", "Google key masked");
+assert.equal(scrubSecrets("hdr eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3OH0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c end"), "hdr [redacted] end", "JWT masked");
+assert.equal(scrubSecrets('Authorization: Bearer abcdef1234567890'), "Authorization: [redacted]", "bearer header masked");
+assert.equal(scrubSecrets('api_key="supersecretvalue12345"'), "[redacted]", "labeled key masked");
+assert.equal(scrubSecrets("Bing returned HTTP 403 for this query"), "Bing returned HTTP 403 for this query", "ordinary prose untouched");
+
+// ── T3 hardening: key-bearing patch file is owner-only ────────────────────────
+const kset = await run({ action: "set_search", provider: "exa", exaApiKey: "sk-test-abcdef123456" });
+assert.ok(kset.success, `set_search with key: ${JSON.stringify(kset)}`);
+if (process.platform !== "win32") {
+	const { statSync } = await import("node:fs");
+	assert.equal(
+		statSync(join(home, "profiles", "testprof", "cordis.patch.yml")).mode & 0o777,
+		0o600,
+		"patch written 0600 when keys are stored",
+	);
+}
+
+// ── T4 hardening: keyed-engine endpoint overrides ─────────────────────────────
+const epSet = await run({ action: "set_search", provider: "exa", exaApiKey: "", exaBaseUrl: "https://gw.example.com/v3/search" });
+assert.ok(epSet.success, `endpoint set_search: ${JSON.stringify(epSet)}`);
+assert.equal((await run({ action: "list_search" })).exaBaseUrl, "https://gw.example.com/v3/search", "endpoint override persisted");
+const badEp = await run({ action: "set_search", provider: "exa", exaBaseUrl: "ftp://nope.example.com" });
+assert.ok(badEp.error && /exaBaseUrl/.test(badEp.error), `non-http scheme rejected: ${JSON.stringify(badEp)}`);
+await run({ action: "set_search", provider: "exa", exaApiKey: "", exaBaseUrl: "" });
+assert.equal((await run({ action: "list_search" })).exaBaseUrl ?? "", "", "blank clears the override");
+assert.ok((await run({ action: "list_search" })).hasKey.exaApiKey === true, "blank endpoint did not disturb stored key");
+
+// ── T5 hardening: per-engine exclude toggles ──────────────────────────────────
+const exSet = await run({ action: "set_search", provider: "bing", exaApiKey: "", excludedEngines: "ddg, perplexity" });
+assert.ok(exSet.success, `exclude set_search: ${JSON.stringify(exSet)}`);
+assert.deepEqual(
+	(await run({ action: "list_search" })).excludedEngines.slice().sort(),
+	["ddg", "perplexity"],
+	"CSV exclusions persisted",
+);
+const badEx = await run({ action: "set_search", provider: "bing", excludedEngines: ["nope"] });
+assert.ok(badEx.error && /unknown engines/.test(badEx.error), `typo rejected: ${JSON.stringify(badEx)}`);
+const allEx = await run({ action: "set_search", provider: "bing", excludedEngines: vendor.ALL_ENGINES });
+assert.ok(allEx.error && /every engine/.test(allEx.error), "excluding every engine rejected");
+await run({ action: "set_search", provider: "bing", exaApiKey: "", excludedEngines: [] });
+assert.deepEqual((await run({ action: "list_search" })).excludedEngines, [], "empty array clears exclusions");
+
+// ── T6 hardening: structured fallback status (_fallback / status:"degraded") ──
+let provider2 = null;
+const ctx2 = {
+	logger: { warn: () => {}, info: () => {} },
+	web: { registerSearchProvider: (p) => { provider2 = p; }, searchProviderId: "preset" },
+	tools: { register: () => () => {} },
+	systemPrompt: { section: () => () => {} },
+	webServer: { register: () => () => {} },
+	settings: { register: () => () => {} },
+	get: () => undefined,
+	effect: (factory) => factory(),
+	inject(deps, fn) { fn(this); },
+};
+const origFetch = globalThis.fetch;
+globalThis.fetch = async (url) => {
+	if (/api\.tavily\.com/.test(String(url))) {
+		return new Response(
+			JSON.stringify({ results: [{ url: "https://example.com/a", title: "A", content: "stub result" }] }),
+			{ status: 200, headers: { "content-type": "application/json" } },
+		);
+	}
+	throw new Error("offline-stub");
+};
+try {
+	vendor.apply(ctx2, { provider: "exa", tavilyApiKey: "stub-key", cache: false });
+	// preferred exa has no key -> fails -> chain lands on tavily (stubbed)
+	const fb = await provider2.search({ query: "q", engine: "exa" });
+	assert.ok(fb._fallback && fb._fallback.from === "exa" && fb._fallback.to === "tavily" && fb._fallback.reason === "failed", `fallback twin: ${JSON.stringify(fb._fallback)}`);
+	assert.ok(/unavailable or failed/.test(fb.content ?? ""), "human Note still present alongside _fallback");
+	const direct = await provider2.search({ query: "q", engine: "tavily" });
+	assert.equal(direct._fallback, undefined, "no fallback twin on a direct hit");
+	assert.ok((direct.sources ?? []).length > 0, "stubbed tavily returned sources");
+} finally {
+	globalThis.fetch = origFetch;
+}
+
 rmSync(home, { recursive: true, force: true });
 console.log("selfcheck OK");

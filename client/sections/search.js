@@ -20,9 +20,9 @@ const PROVIDER_META = {
 	bing: { label: "Bing", free: true },
 	searxng: { label: "SearXNG", free: true },
 	anysearch: { label: "AnySearch", free: true },
-	exa: { label: "Exa", free: false, key: "exaApiKey" },
-	tavily: { label: "Tavily", free: false, key: "tavilyApiKey" },
-	keenable: { label: "Keenable", free: false, key: "keenableApiKey" },
+	exa: { label: "Exa", free: false, key: "exaApiKey", endpoint: "exaBaseUrl" },
+	tavily: { label: "Tavily", free: false, key: "tavilyApiKey", endpoint: "tavilyBaseUrl" },
+	keenable: { label: "Keenable", free: false, key: "keenableApiKey", endpoint: "keenableBaseUrl" },
 	perplexity: { label: "Perplexity", free: false, key: "perplexityApiKey" },
 	"deepseek-official": { label: "DeepSeek", free: false, key: "deepseekApiKey" },
 };
@@ -56,6 +56,10 @@ function SearchSection(p) {
 					region: v.region || "",
 					bingMarket: v.bingMarket || "zh-CN",
 					searxngInstances: v.searxngInstances || "",
+					tavilyBaseUrl: v.tavilyBaseUrl || "",
+					exaBaseUrl: v.exaBaseUrl || "",
+					keenableBaseUrl: v.keenableBaseUrl || "",
+					excludedEngines: Array.isArray(v.excludedEngines) ? v.excludedEngines : [],
 					exaApiKey: "",
 					tavilyApiKey: "",
 					keenableApiKey: "",
@@ -123,6 +127,26 @@ function SearchSection(p) {
 					"Language-region code for Bing: lang-COUNTRY (e.g. en-US, de-DE). Pick from the list."),
 				marketBad ? e("p", { key: "se-market-bad", style: { color: "#e05252", fontSize: 12, flex: "1 1 100%", margin: "2px 0 0" } },
 					"Unrecognized market code — expected like en-US. It will still be saved as typed.") : null,
+				e("div", { key: "se-excl", style: { flex: "1 1 100%", display: "flex", flexWrap: "wrap", gap: 6, margin: "2px 0 0" } },
+					e("span", { style: Object.assign({}, css.note, { width: "100%" }) }, "Exclude from fallback chain:"),
+					Object.keys(PROVIDER_META).map((id) => {
+						const m = PROVIDER_META[id];
+						const on = Array.isArray(form.excludedEngines) && form.excludedEngines.includes(id);
+						const isPreferred = form.provider === id;
+						return e("label", { key: `se-ex-${id}`, style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, opacity: isPreferred ? 0.5 : 1 } },
+							e("input", {
+								type: "checkbox",
+								checked: !!on,
+								disabled: p.busy || isPreferred,
+								onChange: (ev) => {
+									const cur = new Set(Array.isArray(form.excludedEngines) ? form.excludedEngines : []);
+									if (ev.target.checked) cur.add(id); else cur.delete(id);
+									set({ excludedEngines: [...cur] });
+								},
+							}),
+							m.label,
+							isPreferred ? " (preferred)" : "");
+					})),
 			) : null,
 			info && form && form.provider === "searxng" ? e("div", { key: "se-sx", style: Object.assign({}, css.row, { flexWrap: "wrap" }) },
 				field("SearXNG instances",
@@ -155,6 +179,17 @@ function SearchSection(p) {
 							}), true),
 						e("p", { key: "se-keynote", style: Object.assign({}, css.note, { flex: "1 1 100%", margin: "2px 0 0" }) },
 							"This key is saved only for the selected provider. Leave it blank to keep the current value."),
+						meta.endpoint ? [
+							field(`Endpoint (optional) — ${meta.label}`,
+								inputEl({
+									value: form[meta.endpoint] || "",
+									placeholder: "built-in default",
+									disabled: p.busy,
+									onChange: (ev) => set({ [meta.endpoint]: ev.target.value.trim() }),
+								}), true),
+							e("p", { key: "se-endpoint-note", style: Object.assign({}, css.note, { flex: "1 1 100%", margin: "2px 0 0" }) },
+								`Full http(s) search-endpoint override for ${meta.label} (self-hosted or proxy gateway). Clear the box to fall back to the built-in default.`),
+						] : null,
 					],
 			) : null,
 			// datalists referenced by the list= attributes above
