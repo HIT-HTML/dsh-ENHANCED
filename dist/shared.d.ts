@@ -43,7 +43,9 @@ export declare function splitBlock(text: string, begin: string, end: string): {
     head: string;
     tail: string;
 };
-/** Return the managed-block inner text (between begin and end), or "" if absent. */
+/** Return the managed-block inner text (between begin and end), or "" if absent.
+ * A torn block (missing end marker) reads as absent, matching splitBlock's
+ * drop-on-write: readers must never show rows the next write would delete. */
 export declare function splitInner(text: string, begin: string, end: string): string;
 export declare function readPatch(profile: string): Promise<string>;
 export declare function scrubSecrets(text: unknown): string;

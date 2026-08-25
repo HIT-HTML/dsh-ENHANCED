@@ -477,5 +477,63 @@ try {
 	globalThis.fetch = origFetch;
 }
 
+// ── managed-block surgery (splitBlock / splitInner): the code that rewrites
+// real user cordis.patch.yml files. Pin the contracts every feature module
+// and every user config depends on. ──────────────────────────────────────────
+const { splitBlock, splitInner, MCP_BEGIN: B, MCP_END: E } = await import("../dist/shared.js");
+
+// no block => identity; inner reads as absent
+let sample = "- id: keep\n  name: user-row\n";
+assert.deepEqual(splitBlock(sample, B, E), { head: sample, tail: "" }, "no block: splitBlock is identity");
+assert.equal(splitInner(sample, B, E), "", "no block: inner absent");
+
+// block mid-file => head+tail restores everything outside it byte-for-byte
+sample = "before\n\n" + B + "\nrow: 1\n" + E + "\nafter\n";
+let cut = splitBlock(sample, B, E);
+assert.equal(cut.head + cut.tail, "before\n\nafter\n", "head+tail keeps non-block text");
+const innerTxt = splitInner(sample, B, E);
+assert.ok(innerTxt.startsWith(B) && innerTxt.endsWith(E), "inner spans marker to marker");
+assert.ok(innerTxt.includes("row: 1"), "inner carries the body");
+
+// torn block (begin without end): dropped on write AND read as absent
+sample = "keep\n" + B + "\nbroken: true\n";
+cut = splitBlock(sample, B, E);
+assert.equal(cut.head + cut.tail, "keep\n", "torn block dropped from head+tail");
+assert.equal(splitInner(sample, B, E), "", "torn block reads as absent (no ghost rows)");
+
+// CRLF after the end marker consumed once; lone \r too
+assert.equal(splitBlock("a\n" + B + "\nx\n" + E + "\r\nb\n", B, E).tail, "b\n", "CRLF consumed");
+assert.equal(splitBlock("a\n" + B + "\nx\n" + E + "\rb\n", B, E).tail, "b\n", "lone CR consumed");
+
+// an end-marker-shaped line BEFORE begin never truncates early
+sample = E + "\nmid\n" + B + "\nx\n" + E + "\ntail";
+cut = splitBlock(sample, B, E);
+assert.equal(cut.head, E + "\nmid\n", "earlier end-marker line stays in head");
+assert.equal(splitInner(sample, B, E), B + "\nx\n" + E, "inner starts at OUR begin");
+
+// only the FIRST block is managed; a later duplicate survives untouched in tail
+sample = B + "\none\n" + E + "\n" + B + "\ntwo\n" + E + "\n";
+cut = splitBlock(sample, B, E);
+assert.ok(!cut.head.includes(B), "first block lifted");
+assert.ok(cut.tail.includes("two"), "second block left in tail");
+
+// rewrite cycle mirrors writeRows exactly: repeated add/remove must not grow
+// whitespace, duplicate blocks, or lose user content above the block
+const writeLikeFeature = (text, rowsYaml) => {
+	const { head, tail } = splitBlock(text, B, E);
+	let next = head + tail;
+	if (rowsYaml) next = next.trimEnd() + "\n" + B + "\n" + rowsYaml + E + "\n";
+	else next = next.replace(/\n+$/, "\n");
+	return next;
+};
+let file = "# user comment survives\nuser row: keep\n";
+for (let i = 0; i < 3; i++) file = writeLikeFeature(file, `managed: ${i}\n`);
+assert.equal(file.split(B).length - 1, 1, "cycle keeps exactly one block");
+assert.ok(file.startsWith("# user comment survives\nuser row: keep"), "user content preserved");
+assert.ok(!file.includes("\n\n\n"), "no blank-line growth across cycles");
+file = writeLikeFeature(file, "");
+assert.ok(!file.includes(B), "empty rewrite removes the block");
+assert.equal(file.trimEnd(), "# user comment survives\nuser row: keep", "file clean after removal");
+
 rmSync(home, { recursive: true, force: true });
 console.log("selfcheck OK");

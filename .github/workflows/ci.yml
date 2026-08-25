@@ -1,0 +1,23 @@
+# Build + self-check on every push to main and every PR.
+# The repo ships prebuilt dist/, so this is the gate that keeps a broken
+# build out of a release.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selfcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm selfcheck

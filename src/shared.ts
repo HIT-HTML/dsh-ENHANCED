@@ -73,10 +73,13 @@ export function splitBlock(text: string, begin: string, end: string): { head: st
   return { head: text.slice(0, b), tail: text.slice(tailStart) };
 }
 
-/** Return the managed-block inner text (between begin and end), or "" if absent. */
+/** Return the managed-block inner text (between begin and end), or "" if absent.
+ * A torn block (missing end marker) reads as absent, matching splitBlock's
+ * drop-on-write: readers must never show rows the next write would delete. */
 export function splitInner(text: string, begin: string, end: string): string {
-  const { head, tail } = splitBlock(text, begin, end);
-  return text.slice(head.length, text.length - tail.length);
+  const b = text.indexOf(begin);
+  const e = b < 0 ? -1 : text.indexOf(end, b);
+  return e < 0 ? "" : text.slice(b, e + end.length);
 }
 
 export async function readPatch(profile: string): Promise<string> {
