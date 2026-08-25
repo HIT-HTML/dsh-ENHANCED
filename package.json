@@ -1,0 +1,49 @@
+{
+	"name": "dsh-enhanced",
+	"version": "1.0.0",
+	"description": "Everyday upgrades for DeepSeek Harness in one plugin: vendored multi-engine free web search (with self-hosted SearXNG support), persistent skills and MCP server management, auto-compact tuning, instance controls, and Matrix/Cyberpunk themes",
+	"type": "module",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./client": "./client.js",
+		"./package.json": "./package.json"
+	},
+	"dsh": {
+		"client": {
+			"platform": "web",
+			"inject": []
+		}
+	},
+	"files": [
+		"dist",
+		"client.js"
+	],
+	"scripts": {
+		"build": "tsc && node scripts/build-client.mjs",
+		"selfcheck": "node test/selfcheck.mjs"
+	},
+	"keywords": [
+		"deepseek-harness",
+		"dsh",
+		"plugin",
+		"skills",
+		"mcp"
+	],
+	"license": "MIT",
+	"dependencies": {
+		"js-yaml": "^4.1.0"
+	},
+	"devDependencies": {
+		"@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+		"@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+		"@deepseek-ai/schemastery": "3.18.1",
+		"@types/js-yaml": "^4.0.9",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.0.0"
+	}
+}
