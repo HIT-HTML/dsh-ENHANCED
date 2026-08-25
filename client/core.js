@@ -253,10 +253,18 @@ window.__ModuleLoader__.load({
 							call({ action: "list_skills" }),
 							call({ action: "list_mcps" }),
 							call({ action: "mcp_status" }).catch(() => ({ servers: [] })),
-							call({ action: "list_plugins" }).catch(() => ({ plugins: [] })),
-							call({ action: "list_sessions" }).catch(() => ({ sessions: [] })),
+							// null = the call itself failed (e.g. the RUNNING build
+							// predates this section) — sections must show that,
+							// not a fake-clean empty list.
+							call({ action: "list_plugins" }).catch(() => null),
+							call({ action: "list_sessions" }).catch(() => null),
 						]);
-						setSummary({ skills: s.skills || [], mcps: m.mcps || [], plugins: pl.plugins || [], sessions: ses.sessions || [] });
+						setSummary({
+							skills: s.skills || [],
+							mcps: m.mcps || [],
+							plugins: pl ? pl.plugins || [] : null,
+							sessions: ses ? ses.sessions || [] : null,
+						});
 						setStates(Object.fromEntries((st.servers || []).map((x) => [`${x.profile}/${x.serverName}`, x.state])));
 						setError(null);
 						setLoaded(true);

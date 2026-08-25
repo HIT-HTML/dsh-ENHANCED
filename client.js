@@ -255,10 +255,18 @@ window.__ModuleLoader__.load({
 							call({ action: "list_skills" }),
 							call({ action: "list_mcps" }),
 							call({ action: "mcp_status" }).catch(() => ({ servers: [] })),
-							call({ action: "list_plugins" }).catch(() => ({ plugins: [] })),
-							call({ action: "list_sessions" }).catch(() => ({ sessions: [] })),
+							// null = the call itself failed (e.g. the RUNNING build
+							// predates this section) — sections must show that,
+							// not a fake-clean empty list.
+							call({ action: "list_plugins" }).catch(() => null),
+							call({ action: "list_sessions" }).catch(() => null),
 						]);
-						setSummary({ skills: s.skills || [], mcps: m.mcps || [], plugins: pl.plugins || [], sessions: ses.sessions || [] });
+						setSummary({
+							skills: s.skills || [],
+							mcps: m.mcps || [],
+							plugins: pl ? pl.plugins || [] : null,
+							sessions: ses ? ses.sessions || [] : null,
+						});
 						setStates(Object.fromEntries((st.servers || []).map((x) => [`${x.profile}/${x.serverName}`, x.state])));
 						setError(null);
 						setLoaded(true);
@@ -871,13 +879,14 @@ function PluginsSection(p) {
 		p.patch(Object.assign({}, draft, { pluginOps: ops }));
 	};
 
-	const plugins = p.plugins || [];
+	const plugins = Array.isArray(p.plugins) ? p.plugins : [];
+	const listFailed = p.plugins === null;
 	const knownProfiles = Array.from(new Set(plugins.map((m) => m.profile)));
 	const ql = query.trim().toLowerCase();
 	const matchQ = (...parts) => !ql || parts.some((x) => String(x || "").toLowerCase().includes(ql));
 	const inProfile = profFilter === "all" ? plugins : plugins.filter((m) => m.profile === profFilter);
 	const visible = ql ? inProfile.filter((m) => matchQ(m.id, m.profile)) : inProfile;
-	const countText = p.open && p.loaded ? (ql ? `${visible.length}/${plugins.length}` : String(plugins.length)) : null;
+	const countText = p.open && p.loaded ? (listFailed ? "?" : ql ? `${visible.length}/${plugins.length}` : String(plugins.length)) : null;
 
 	const rows = visible.map((m, i) => {
 		const key = `${m.profile}/${m.id}`;
@@ -931,7 +940,8 @@ function PluginsSection(p) {
 						e("th", { style: Object.assign({}, css.th, { width: "14%" }) }))),
 					e("tbody", { className: "dshx-tbody" }, rows))),
 			p.open && !p.loaded && !p.error ? e("p", { key: "pl-load", style: css.empty }, "loading...") : null,
-			p.open && p.loaded && plugins.length === 0 ? e("p", { key: "pl-empty", style: css.empty }, "No plugins found in any profile.") : null,
+			p.open && p.loaded && listFailed ? e("p", { key: "pl-stale", style: css.err }, "Plugin list unavailable — the running dsh-enhanced build predates this section. Reload this profile's GUI process to pick up v1.1.0.") : null,
+			p.open && p.loaded && !listFailed && plugins.length === 0 ? e("p", { key: "pl-empty", style: css.empty }, "No plugins found in any profile.") : null,
 			profFilter !== "all" && plugins.length > 0 && visible.length === 0 ? e("p", { key: "pl-filt", style: css.muted }, "No plugins in this profile.") : null,
 			ql && visible.length === 0 ? e("p", { key: "pl-nomatch", style: css.empty }, `No plugins matching “${query.trim()}”.`) : null,
 		] : null,
@@ -971,10 +981,11 @@ function SessionsSection(p) {
 		p.patch(Object.assign({}, draft, { delSessions: has ? draft.delSessions.filter((k) => k !== key) : draft.delSessions.concat([key]) }));
 	};
 
-	const sessions = p.sessions || [];
+	const sessions = Array.isArray(p.sessions) ? p.sessions : [];
+	const listFailed = p.sessions === null;
 	const ql = query.trim().toLowerCase();
 	const visible = ql ? sessions.filter((s) => `${s.workspace}/${s.sessionId}`.toLowerCase().includes(ql)) : sessions;
-	const countText = p.open && p.loaded ? (ql ? `${visible.length}/${sessions.length}` : String(sessions.length)) : null;
+	const countText = p.open && p.loaded ? (listFailed ? "?" : ql ? `${visible.length}/${sessions.length}` : String(sessions.length)) : null;
 	const fmtBytes = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.round(n / 1e3) + " KB");
 	const fmtIdle = (m) => (m < 60 ? m + " min" : m < 1440 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " d");
 	const stagedBytes = sessions.filter((s) => draft.delSessions.includes(`${s.workspace}/${s.sessionId}`)).reduce((n, s) => n + s.bytes, 0);
@@ -1017,7 +1028,8 @@ function SessionsSection(p) {
 						e("th", { style: Object.assign({}, css.th, { width: "18%" }) }, "State"), e("th", { style: Object.assign({}, css.th, { width: "12%" }) }))),
 					e("tbody", { className: "dshx-tbody" }, rows))),
 			p.open && !p.loaded && !p.error ? e("p", { key: "se-load", style: css.empty }, "loading...") : null,
-			p.open && p.loaded && sessions.length === 0 ? e("p", { key: "se-empty", style: css.empty }, "No stored sessions.") : null,
+			p.open && p.loaded && listFailed ? e("p", { key: "se-stale", style: css.err }, "Session list unavailable — the running dsh-enhanced build predates this section. Reload this profile's GUI process to pick up v1.1.0.") : null,
+			p.open && p.loaded && !listFailed && sessions.length === 0 ? e("p", { key: "se-empty", style: css.empty }, "No stored sessions.") : null,
 			ql && visible.length === 0 ? e("p", { key: "se-nomatch", style: css.empty }, `No sessions matching “${query.trim()}”.`) : null,
 		] : null,
 	];

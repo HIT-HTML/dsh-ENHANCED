@@ -26,10 +26,11 @@ function SessionsSection(p) {
 		p.patch(Object.assign({}, draft, { delSessions: has ? draft.delSessions.filter((k) => k !== key) : draft.delSessions.concat([key]) }));
 	};
 
-	const sessions = p.sessions || [];
+	const sessions = Array.isArray(p.sessions) ? p.sessions : [];
+	const listFailed = p.sessions === null;
 	const ql = query.trim().toLowerCase();
 	const visible = ql ? sessions.filter((s) => `${s.workspace}/${s.sessionId}`.toLowerCase().includes(ql)) : sessions;
-	const countText = p.open && p.loaded ? (ql ? `${visible.length}/${sessions.length}` : String(sessions.length)) : null;
+	const countText = p.open && p.loaded ? (listFailed ? "?" : ql ? `${visible.length}/${sessions.length}` : String(sessions.length)) : null;
 	const fmtBytes = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.round(n / 1e3) + " KB");
 	const fmtIdle = (m) => (m < 60 ? m + " min" : m < 1440 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " d");
 	const stagedBytes = sessions.filter((s) => draft.delSessions.includes(`${s.workspace}/${s.sessionId}`)).reduce((n, s) => n + s.bytes, 0);
@@ -72,7 +73,8 @@ function SessionsSection(p) {
 						e("th", { style: Object.assign({}, css.th, { width: "18%" }) }, "State"), e("th", { style: Object.assign({}, css.th, { width: "12%" }) }))),
 					e("tbody", { className: "dshx-tbody" }, rows))),
 			p.open && !p.loaded && !p.error ? e("p", { key: "se-load", style: css.empty }, "loading...") : null,
-			p.open && p.loaded && sessions.length === 0 ? e("p", { key: "se-empty", style: css.empty }, "No stored sessions.") : null,
+			p.open && p.loaded && listFailed ? e("p", { key: "se-stale", style: css.err }, "Session list unavailable — the running dsh-enhanced build predates this section. Reload this profile's GUI process to pick up v1.1.0.") : null,
+			p.open && p.loaded && !listFailed && sessions.length === 0 ? e("p", { key: "se-empty", style: css.empty }, "No stored sessions.") : null,
 			ql && visible.length === 0 ? e("p", { key: "se-nomatch", style: css.empty }, `No sessions matching “${query.trim()}”.`) : null,
 		] : null,
 	];

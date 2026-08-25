@@ -35,13 +35,14 @@ function PluginsSection(p) {
 		p.patch(Object.assign({}, draft, { pluginOps: ops }));
 	};
 
-	const plugins = p.plugins || [];
+	const plugins = Array.isArray(p.plugins) ? p.plugins : [];
+	const listFailed = p.plugins === null;
 	const knownProfiles = Array.from(new Set(plugins.map((m) => m.profile)));
 	const ql = query.trim().toLowerCase();
 	const matchQ = (...parts) => !ql || parts.some((x) => String(x || "").toLowerCase().includes(ql));
 	const inProfile = profFilter === "all" ? plugins : plugins.filter((m) => m.profile === profFilter);
 	const visible = ql ? inProfile.filter((m) => matchQ(m.id, m.profile)) : inProfile;
-	const countText = p.open && p.loaded ? (ql ? `${visible.length}/${plugins.length}` : String(plugins.length)) : null;
+	const countText = p.open && p.loaded ? (listFailed ? "?" : ql ? `${visible.length}/${plugins.length}` : String(plugins.length)) : null;
 
 	const rows = visible.map((m, i) => {
 		const key = `${m.profile}/${m.id}`;
@@ -95,7 +96,8 @@ function PluginsSection(p) {
 						e("th", { style: Object.assign({}, css.th, { width: "14%" }) }))),
 					e("tbody", { className: "dshx-tbody" }, rows))),
 			p.open && !p.loaded && !p.error ? e("p", { key: "pl-load", style: css.empty }, "loading...") : null,
-			p.open && p.loaded && plugins.length === 0 ? e("p", { key: "pl-empty", style: css.empty }, "No plugins found in any profile.") : null,
+			p.open && p.loaded && listFailed ? e("p", { key: "pl-stale", style: css.err }, "Plugin list unavailable — the running dsh-enhanced build predates this section. Reload this profile's GUI process to pick up v1.1.0.") : null,
+			p.open && p.loaded && !listFailed && plugins.length === 0 ? e("p", { key: "pl-empty", style: css.empty }, "No plugins found in any profile.") : null,
 			profFilter !== "all" && plugins.length > 0 && visible.length === 0 ? e("p", { key: "pl-filt", style: css.muted }, "No plugins in this profile.") : null,
 			ql && visible.length === 0 ? e("p", { key: "pl-nomatch", style: css.empty }, `No plugins matching “${query.trim()}”.`) : null,
 		] : null,
