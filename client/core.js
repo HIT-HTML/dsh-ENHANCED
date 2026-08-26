@@ -249,7 +249,7 @@ window.__ModuleLoader__.load({
 				// expands the card. Sections fetch their own extra data.
 				const reload = React.useCallback(async () => {
 					try {
-						const [s, m, st, pl, ses] = await Promise.all([
+						const [s, m, st, pl] = await Promise.all([
 							call({ action: "list_skills" }),
 							call({ action: "list_mcps" }),
 							call({ action: "mcp_status" }).catch(() => ({ servers: [] })),
@@ -257,13 +257,11 @@ window.__ModuleLoader__.load({
 							// predates this section) — sections must show that,
 							// not a fake-clean empty list.
 							call({ action: "list_plugins" }).catch(() => null),
-							call({ action: "list_sessions" }).catch(() => null),
 						]);
 						setSummary({
 							skills: s.skills || [],
 							mcps: m.mcps || [],
 							plugins: pl ? pl.plugins || [] : null,
-							sessions: ses ? ses.sessions || [] : null,
 						});
 						setStates(Object.fromEntries((st.servers || []).map((x) => [`${x.profile}/${x.serverName}`, x.state])));
 						setError(null);
@@ -324,8 +322,7 @@ window.__ModuleLoader__.load({
 							skills,
 							mcps,
 							plugins: (summary && summary.plugins) || [],
-							sessions: (summary && summary.sessions) || [],
-							states,
+						states,
 							epoch,
 							reload,
 							error,

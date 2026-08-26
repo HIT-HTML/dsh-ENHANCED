@@ -23,7 +23,6 @@ const FILES = [
 	"client/sections/skills.js",
 	"client/sections/mcp.js",
 	"client/sections/plugins.js",
-	"client/sections/sessions.js",
 	"client/sections/compact.js",
 	"client/sections/search.js",
 	"client/session-delete.js",
