@@ -1188,6 +1188,7 @@ function cyberpunkThemeFactory() {
 					document.body.toggleAttribute("data-ds-dark-theme", true);
 				});
 				observer.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+				let tokenGuard = null;
 				try {
 					ctx.theme.register({
 						id: THEME_ID,
@@ -1195,11 +1196,22 @@ function cyberpunkThemeFactory() {
 						tokens: TOKENS
 					});
 					ctx.theme.setTheme(THEME_ID);
+					// Native repaints (day/night switch, lazily-loaded settings/model
+					// chunks) rewrite body tokens with the stock palette, leaving gray
+					// default menus over the theme. Reassert ours whenever they drift.
+					// ponytail: inequality check converges the observe-loop; upgrade
+					// path = an upstream "tokens changed" hook on the theme service.
+					tokenGuard = new MutationObserver(() => {
+						for (const k in TOKENS)
+							if (document.body.style.getPropertyValue(k) !== TOKENS[k]) document.body.style.setProperty(k, TOKENS[k]);
+					});
+					tokenGuard.observe(document.body, { attributes: true, attributeFilter: ["style"] });
 				} catch (e) {
 					console.error("dsh-theme-cyberpunk2077 theme register failed", e);
 				}
 				return () => {
 					observer.disconnect();
+					if (tokenGuard) tokenGuard.disconnect();
 					document.removeEventListener("keydown", onKeydown, true);
 					stopPending();
 					stopNotices();
