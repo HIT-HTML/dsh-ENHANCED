@@ -11,11 +11,17 @@
  *    mid-life — so we refuse sessions live in THIS process and any log touched
  *    within the idle guard window (another instance may still hold it).
  *
- * Deletion is a two-step move into our own trash dir (same DSH_HOME volume, so
- * rename is atomic): dry-run returns a plan + token; executing re-scans,
+ * Deletion is a two-step move into the SYSTEM trash (macOS ~/.Trash, Linux
+ * FreeDesktop Trash with .trashinfo sidecar, Windows Recycle Bin via
+ * PowerShell): dry-run returns a plan + token; executing re-scans,
  * re-derives the token, and refuses on mismatch — a stale plan can never fire.
+ * A failed move is reported to the user, never silently rerouted; TRASH_DIR
+ * below remains only as the legacy location of pre-native deletions.
  */
-import { readdir, stat, mkdir, rename } from "node:fs/promises";
+import { readdir, stat, mkdir, rename, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { homedir } from "node:os";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { DSH_HOME, ENHANCED_STATE_DIR, type Env, type Handler } from "./shared.js";
@@ -24,6 +30,36 @@ export const SESSIONS_ACTIONS = ["list_sessions", "delete_sessions"] as const;
 
 const SESSIONS_ROOT = join(DSH_HOME, "sessions");
 const TRASH_DIR = join(ENHANCED_STATE_DIR, "trash");
+
+/** Destination for NEW deletions: the OS-native trash. DSH_ENHANCED_TRASH_DIR
+ * overrides it (tests, exotic setups). Failures are reported, not rerouted. */
+function nativeTrashDir(): string {
+  if (process.env.DSH_ENHANCED_TRASH_DIR) return process.env.DSH_ENHANCED_TRASH_DIR;
+  if (process.platform === "darwin") return join(homedir(), ".Trash");
+  const data = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  return join(data, "Trash", "files"); // FreeDesktop spec: files/ + info/
+}
+
+/** FreeDesktop .trashinfo sidecar so Linux desktops can offer "Restore". */
+async function writeTrashInfo(filesDir: string, name: string, origin: string): Promise<void> {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const body =
+    `[Trash Info]\nPath=${encodeURI(origin).replace(/#/g, "%23").replace(/\?/g, "%3F")}` +
+    `\nDeletionDate=${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}\n`;
+  const infoDir = join(filesDir, "..", "info");
+  await mkdir(infoDir, { recursive: true });
+  await writeFile(join(infoDir, `${name}.trashinfo`), body);
+}
+
+/** Windows has no scriptable Recycle Bin API reachable from Node; the
+ * VisualBasic FileSystem shell route ('SendToRecycleBin') is the proven one. */
+async function recycleOnWindows(src: string): Promise<void> {
+  const script =
+    `Add-Type -AssemblyName Microsoft.VisualBasic; ` +
+    `[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${src.replace(/'/g, "''")}', 'OnlyErrorDialogs', 'SendToRecycleBin')`;
+  await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+}
 /** ponytail: no cross-process lock exists on disk, so "open elsewhere" is
  * approximated by recency; raise/retry later if this misfires in practice. */
 const IDLE_GUARD_MS = 15 * 60_000;
@@ -131,7 +167,8 @@ export const handleSessions: Handler = async function (action, args, env) {
           liveHere: live.has(`session-${r.sessionId}`),
         })).sort((a, b) => b.minutesIdle - a.minutesIdle),
         totalBytes: rows.reduce((n, r) => n + r.bytes, 0),
-        trashDir: TRASH_DIR,
+        nativeTrashDir: nativeTrashDir(),
+        legacyTrashDir: TRASH_DIR,
       };
     }
     case "delete_sessions": {
@@ -145,28 +182,51 @@ export const handleSessions: Handler = async function (action, args, env) {
           confirmToken: tokenFor(rows),
           warnings: errors,
           message:
-            `Dry run: ${rows.length} session(s), ${totalBytes} bytes would move to ${TRASH_DIR}. ` +
+            `Dry run: ${rows.length} session(s), ${totalBytes} bytes would move to the system trash (${nativeTrashDir()}). ` +
             `Re-run delete_sessions with sessionIds, confirm: true AND this exact confirmToken to execute.`,
         };
       }
       if (args.confirmToken !== tokenFor(rows)) {
         return { error: `confirmToken mismatch — sessions changed since the dry run; start over without confirm` };
       }
-      await mkdir(TRASH_DIR, { recursive: true });
+      const trashDir = nativeTrashDir();
+      await mkdir(trashDir, { recursive: true });
       const moved: string[] = [];
+      const failed: string[] = [];
+      let freedBytes = 0;
       for (const r of rows) {
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const dest = join(TRASH_DIR, `${stamp}-${r.sessionId}`);
-        await rename(join(SESSIONS_ROOT, r.workspace, `session-${r.sessionId}`), dest);
-        moved.push(`${r.workspace}/${r.sessionId}`);
+        const src = join(SESSIONS_ROOT, r.workspace, `session-${r.sessionId}`);
+        try {
+          if (process.platform === "win32") {
+            await recycleOnWindows(src);
+          } else {
+            const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-${r.sessionId}`;
+            await rename(src, join(trashDir, name));
+            if (process.platform !== "darwin")
+              // ponytail: sidecar failure is non-fatal — the session is already
+              // safely trashed; only the desktop's Restore metadata is missing.
+              await writeTrashInfo(trashDir, name, src).catch(() => {});
+          }
+          moved.push(`${r.workspace}/${r.sessionId}`);
+          freedBytes += r.bytes;
+        } catch (e) {
+          failed.push(`${r.workspace}/${r.sessionId}: ${(e as Error)?.message?.split("\n")[0] ?? String(e)}`);
+        }
       }
+      if (!moved.length)
+        return { error: `Move to system trash (${trashDir}) failed — nothing was deleted. ${failed.join("; ")}` };
       return {
         success: true,
         moved,
-        freedBytes: totalBytes,
-        warnings: errors,
-        trashDir: TRASH_DIR,
-        message: `Moved ${moved.length} session(s) (${totalBytes} bytes) to trash. Restore = move the directory back; purge = delete inside trash.`,
+        failed,
+        freedBytes,
+        warnings: [...(errors.length ? [errors.join("; ")] : []), ...failed.map((f) => `NOT moved — ${f}`)],
+        trashDir,
+        legacyTrashDir: TRASH_DIR,
+        message:
+          failed.length
+            ? `Moved ${moved.length} session(s); ${failed.length} FAILED and remain in place — see warnings.`
+            : `Moved ${moved.length} session(s) (${freedBytes} bytes) to the system trash (${trashDir}). Restore via the OS trash, or by moving the folder back under ${SESSIONS_ROOT}.`,
       };
     }
     default:

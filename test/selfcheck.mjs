@@ -7,6 +7,8 @@ import assert from "node:assert";
 
 const home = mkdtempSync(join(tmpdir(), "dsh-enhanced-test-"));
 process.env.DSH_HOME = home;
+// Native-trash destination for deletes — keeps tests off the real ~/.Trash.
+process.env.DSH_ENHANCED_TRASH_DIR = join(home, "os-trash");
 mkdirSync(join(home, "profiles", "testprof"), { recursive: true });
 // Real profiles carry a package.json manifest; search wiring edits it.
 writeFileSync(
@@ -646,9 +648,10 @@ assert.ok(badTok.error && badTok.error.includes("mismatch"), "wrong token reject
 const exec = await run({ action: "delete_sessions", sessionIds: ["ws-a/old1"], confirm: true, confirmToken: dry.confirmToken });
 assert.ok(exec.success && exec.freedBytes === 1000, `execute: ${JSON.stringify(exec)}`);
 assert.ok(!existsSync(join(sesRoot, "ws-a", "session-old1")), "source dir gone");
-const trashEntries = readdirSync(join(home, "dsh-enhanced", "trash"));
-assert.equal(trashEntries.length, 1, "one trashed dir");
-assert.ok(readdirSync(join(home, "dsh-enhanced", "trash", trashEntries[0])).includes("session.jsonl.zstd"), "trash keeps contents");
+const trashEntries = readdirSync(join(home, "os-trash"));
+assert.equal(trashEntries.length, 1, "one trashed dir in native-trash target");
+assert.ok(readdirSync(join(home, "os-trash", trashEntries[0])).includes("session.jsonl.zstd"), "trash keeps contents");
+assert.equal(exec.trashDir, join(home, "os-trash"), "execute reports the native trash dir");
 
 // live-in-this-process refusal via the in-memory store, when exposed
 ctx.sessions = { store: new Map([["session-old2", {}]]) };
