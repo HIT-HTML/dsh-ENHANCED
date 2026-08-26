@@ -557,7 +557,10 @@ writeFileSync(join(profDir, "package.json"), JSON.stringify({
 // "patch: entry not found" warning, which is why theme toggles were no-ops.
 // Other modules' inject cbs expect their own scope shape — ignore their refire.
 const fireInject = (scope) => ctx.injectCbs.forEach((fn) => { try { fn(scope); } catch {} });
-fireInject({ loader: { entries: () => [{ id: "my-entry", options: { name: "my-plugin" } }] } });
+// Runtime loader ids are prefixed with their mount source ("include:"); patch
+// rows must use the bare CONFIG id, so the resolver strips it. The prefixed
+// stub below is the exact shape a real boot produced on the lab.
+fireInject({ loader: { entries: () => [{ id: "include:my-entry", options: { name: "my-plugin" } }] } });
 let listedPlg = await run({ action: "list_plugins" });
 assert.ok(listedPlg.plugins.find((x) => x.id === "my-plugin")?.live, "options.name entry counts as live");
 assert.ok(!listedPlg.plugins.find((x) => x.id === "@deepseek-ai/modlens")?.live, "absent entry not live");

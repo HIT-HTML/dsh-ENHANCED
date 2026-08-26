@@ -61,14 +61,16 @@ async function readManifest(profile: string): Promise<Manifest> {
   return out;
 }
 
-/** Disable rows from OUR managed block. */
+/** Disable rows from OUR managed block. Row ids are normalized through
+ * configId() so legacy rows written under runtime-id form ("include:x")
+ * collapse onto their config id and get cleaned up by the next toggle. */
 function ourDisabled(text: string): Map<string, boolean> {
   const map = new Map<string, boolean>();
   const inner = splitInner(text, PLUGINS_BEGIN, PLUGINS_END);
   if (!inner.trim()) return map;
   const parsed = yaml.load(inner);
   for (const row of Array.isArray(parsed) ? (parsed as Record<string, any>[]) : []) {
-    if (row && typeof row.id === "string") map.set(row.id, row.disabled === true);
+    if (row && typeof row.id === "string") map.set(configId(row.id), row.disabled === true);
   }
   return map;
 }
@@ -101,7 +103,14 @@ async function writeOurRows(profile: string, rows: Record<string, unknown>[]): P
 /** Live loader facts: package name -> composition-row ids mounting it, plus
  * every entry id. Patch semantics (dsh-app-boot applyEntryPatches) match rows
  * by ENTRY ID — a row keyed by package name warns "not found" and is skipped,
- * so disables must target ids like "ui-theme-cyberpunk", not the package. */
+ * so disables must target ids like "ui-theme-cyberpunk", not the package.
+ * Loader runtime ids are namespaced with the mount source
+ * ("include:ui-theme-cyberpunk"); the patch file operates on CONFIG ids, so
+ * strip that prefix — verified against --dump-config ground truth. */
+function configId(runtimeId: string): string {
+  return runtimeId.replace(/^(include:)+/, "");
+}
+
 function liveIndex(loaderRef: any): { byPkg: Map<string, string[]>; ids: Set<string> } {
   const byPkg = new Map<string, string[]>();
   const ids = new Set<string>();
@@ -110,10 +119,11 @@ function liveIndex(loaderRef: any): { byPkg: Map<string, string[]>; ids: Set<str
       const e = entry as any;
       const name = typeof e?.options?.name === "string" ? e.options.name : typeof e?.name === "string" ? e.name : undefined;
       if (typeof e?.id !== "string") continue;
-      ids.add(e.id);
+      const id = configId(e.id);
+      ids.add(id);
       if (name) {
         const list = byPkg.get(name) ?? [];
-        if (!list.includes(e.id)) list.push(e.id);
+        if (!list.includes(id)) list.push(id);
         byPkg.set(name, list);
       }
     }
