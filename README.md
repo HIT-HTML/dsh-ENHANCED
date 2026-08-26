@@ -4,13 +4,13 @@
 
 One plugin that bundles the everyday upgrades DeepSeek Harness (DSH) lacks out of the box:
 
-- **Free web search** — a vendored multi-engine search provider (DuckDuckGo ×2, Bing, AnySearch, SearXNG, Mojeek-ready fallback chain + optional paid engines), configured from a Settings tab, with self-hosted-SearXNG support, live health checks, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy gateways.
-- **Skills manager** — install/edit/remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder OF skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
+- **Free web search** — a vendored multi-engine provider: DuckDuckGo ×2, Bing, AnySearch, SearXNG and SearXNG-compatible gateways, plus keyed engines (Exa, Tavily, Keenable, Perplexity, DeepSeek). Configured entirely from a Settings tab: live health checks for self-hosted instances, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy setups.
+- **Skills manager** — install/edit/remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder of skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
 - **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles.
 - **Plugin manager** — enable/disable any mounted plugin per profile by writing disable rows into the profile's patch file; boots watch that file and recompose live, so a toggle lands without a restart. Core plugins (`dsh-base`, `dsh-web-app`, `dsh-enhanced`) are hard-refused, and disabling an official `@deepseek-ai/*` plugin requires an explicit confirm.
-- **Session housekeeping** — scan stored conversation logs under `~/.dsh/sessions/` (size, age) and move whole session directories into `~/.dsh/dsh-enhanced/trash/`. Deletion is dry-run first (returns a plan + token), refuses sessions open in this process or active in the last 15 minutes (another window may still hold them), and restores by simply moving the directory back.
+- **Session housekeeping** — scan stored conversation logs under `~/.dsh/sessions/` (size, age) and move whole session directories into `~/.dsh/dsh-enhanced/trash/`. In the sidebar itself, every session row grows a small trash-can icon on hover next to its ⋯ menu; it drives the same guarded pipeline. Deletion is dry-run first (plan + token), refuses sessions open in this process or active in the last 15 minutes (another window may still hold them), and restores by simply moving the directory back.
 - **Auto-compact tuner** — clamp the context-compaction trigger below the harness default.
-- **Instance controls** — clean shutdown/restart of the GUI process via icon buttons beside Settings in the sidebar foot.
+- **Instance controls** — one-click shutdown/restart of the GUI process via icon buttons beside Settings in the sidebar foot.
 - **Themes** — original *ENHANCED* theme (phosphor-green terminal look, digital-rain boot intro) and a *Cyberpunk 2077* theme ported from the community theme.
 
 Single host composition plugin (`cordis.patch.yml` row), single model tool surface (`manage_skills_mcps`), single browser card (Settings → Plugins). No telemetry, no external services beyond the search engines themselves.
@@ -47,17 +47,20 @@ Two halves, standard DSH plugin shape:
 │            browser RPC channel, settings anchor, boots the  │
 │            vendored search engine                           │
 │ shared.ts  paths, managed-block surgery, Env/Handler types  │
-│ skills.ts  mcp.ts   compact.ts   instance.ts   search.ts    │
-│            feature modules — each owns its actions end-to-end│
+│ skills.ts  mcp.ts  plugins.ts  sessions.ts  compact.ts      │
+│            instance.ts  search.ts  cooldown.ts — feature    │
+│            modules, each owns its actions end-to-end        │
 │ free-search-vendor.ts   vendored engine (see below)         │
 └──────────────┬──────────────────────────────────────────────┘
                │ package-private JSON RPC (browser → host)
 ┌─ CLIENT (browser, client/** → client.js bundle) ────────────┐
-│ core.js        draft/save pipeline, sections registry       │
-│ main.js        boot, saved-theme activation                 │
-│ sections/*     one card per feature (skills, mcp, compact,  │
-│                search, theme)                               │
-│ themes/*       matrix, cyberpunk2077 (+ boot intro)         │
+│ core.js            draft/save pipeline, sections registry     │
+│ main.js            boot, saved-theme activation               │
+│ sections/*         one card per feature (skills, mcp, plugins,│
+│                    sessions, compact, search, theme)          │
+│ session-delete.js  hover trash-can delete for native sidebar  │
+│                    rows (fiber-resolved, guarded RPC)         │
+│ themes/*           matrix, cyberpunk2077 (+ boot intro)       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -235,7 +238,8 @@ npm run selfcheck    # offline end-to-end test, no frameworks
 **selfcheck** (`test/selfcheck.mjs`) builds a temp `$DSH_HOME`, runs the real handlers against a
 stubbed plugin context (captured registrations instead of live services), and asserts disk output:
 managed-block round-trips, block-surgery edge cases (torn blocks, CRLF, rewrite cycles), secret
-preservation, YAML shapes, name validation, provider registration.
+preservation, YAML shapes, name validation, provider registration, the full session-delete flow
+(guards, token, trash), and a smoke render of the built browser bundle.
 It is the regression gate — extend it when you add behavior.
 
 **CI** (`.github/workflows/ci.yml`): every push to `main` and every PR runs frozen install → build →
