@@ -129,6 +129,14 @@ return {
 			});
 		});
 
+		// Native sidebar rows gain a hover trash-can delete (client/session-delete.js).
+		try {
+			const disposeDel = setupSessionDelete(ctx);
+			if (typeof ctx.effect === "function") ctx.effect(() => disposeDel);
+		} catch (err) {
+			console.error("[dsh-enhanced] session hover delete unavailable:", err);
+		}
+
 		// Restore the persisted visual theme, if one is selected.
 		const chosen = readStoredTheme();
 		if (!chosen || chosen === "default") return;

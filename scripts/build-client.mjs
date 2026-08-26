@@ -26,6 +26,7 @@ const FILES = [
 	"client/sections/sessions.js",
 	"client/sections/compact.js",
 	"client/sections/search.js",
+	"client/session-delete.js",
 	"client/themes/cyberpunk2077.js",
 	"client/themes/matrix.js",
 	"client/sections/theme.js",

@@ -19,18 +19,7 @@ SAVE_STEPS.push(async (call, rem) => {
 function SessionsSection(p) {
 	const [openSes, setOpenSes] = React.useState(false);
 	const [query, setQuery] = React.useState("");
-	const [menuKey, setMenuKey] = React.useState(null); // which row's ⋯ menu is open
 	const { draft } = p;
-
-	// One open menu at a time; outside click or Escape closes it.
-	React.useEffect(() => {
-		if (!menuKey) return;
-		const close = () => setMenuKey(null);
-		const onKey = (ev) => { if (ev.key === "Escape") close(); };
-		document.addEventListener("click", close);
-		document.addEventListener("keydown", onKey);
-		return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", onKey); };
-	}, [menuKey]);
 
 	const toggleDel = (key) => {
 		const has = draft.delSessions.includes(key);
@@ -58,34 +47,14 @@ function SessionsSection(p) {
 					e("span", { style: css.dot(s.liveHere ? GREEN : TERTIARY, !s.liveHere) }),
 					s.liveHere ? "open here" : "idle " + fmtIdle(s.minutesIdle))),
 			e("td", { style: Object.assign({}, css.td, css.tdActions) },
-				e("span", { style: css.menuWrap },
-					e("button", {
-						className: "dshx-btn",
-						style: Object.assign({}, css.btn, css.btnSm, { minWidth: "30px", padding: "3px 8px" }),
-						"aria-label": `Actions for ${key}`,
-						"aria-haspopup": "menu",
-						"aria-expanded": menuKey === key ? "true" : "false",
-						title: "Actions",
-						disabled: p.busy,
-						onClick: (ev) => { ev.stopPropagation(); setMenuKey(menuKey === key ? null : key); },
-					}, "⋯"),
-					menuKey === key ? e("div", { style: css.menu, role: "menu", onClick: (ev) => ev.stopPropagation() },
-						e("button", {
-							className: "dshx-menuitem",
-							role: "menuitem",
-							style: Object.assign({}, css.menuItem, staged ? null : { color: RED }),
-							disabled: p.busy || (!staged && blocked),
-							title: !staged && blocked
-								? (s.liveHere ? "Open in this instance — the host refuses it." : "Active recently — sessions idle under 15 minutes are refused.")
-								: "",
-							onClick: () => { toggleDel(key); setMenuKey(null); },
-						},
-							staged ? "Undo delete" : "Delete session…",
-							!staged && blocked
-								? e("span", { style: css.menuSub }, s.liveHere ? "open here" : `idle ${fmtIdle(s.minutesIdle)}`)
-								: null,
-						),
-					) : null)),
+				e("button", {
+					className: staged ? "dshx-btn" : "dshx-btn dshx-danger",
+					style: Object.assign({}, staged ? css.btn : css.btnDanger, css.btnSm),
+					disabled: p.busy || (!staged && blocked),
+					title: blocked && !s.liveHere ? "Active recently — the host refuses sessions idle under 15 minutes." : "",
+					onClick: () => toggleDel(key),
+				}, staged ? "Keep" : "Delete"),
+			),
 		);
 	});
 

@@ -656,6 +656,16 @@ const liveRes = await run({ action: "delete_sessions", sessionIds: ["ws-b/old2"]
 assert.ok(liveRes.error && liveRes.error.includes("open in this process"), "live session refused");
 assert.ok(listedSes.sessions.every((s) => !s.liveHere), "earlier scan predates store exposure");
 
+// bare session ids (sidebar rows carry no workspace) resolve like "ws/id" keys
+mkSes("ws-a", "bare1", 1000, 40 * 86_400_000);
+const bareDry = await run({ action: "delete_sessions", sessionIds: ["bare1"] });
+assert.ok(bareDry.confirmToken && bareDry.plan[0].key === "ws-a/bare1", `bare id dry run: ${JSON.stringify(bareDry)}`);
+const bareExec = await run({ action: "delete_sessions", sessionIds: ["session-bare1"], confirm: true, confirmToken: bareDry.confirmToken });
+assert.ok(bareExec.success, `prefixed bare id executes: ${JSON.stringify(bareExec)}`);
+assert.ok(!existsSync(join(sesRoot, "ws-a", "session-bare1")), "bare-id delete moved dir to trash");
+const ghostBare = await run({ action: "delete_sessions", sessionIds: ["ghost"] });
+assert.ok(ghostBare.error && ghostBare.error.includes("not a known session"), "unknown bare id still errors");
+
 // ── client bundle boots: execute the built client.js with stubbed browser
 // globals, drive apply() through mocked slot injection, and render every
 // registered component with a mini element-walker that CALLS function
@@ -675,9 +685,20 @@ assert.ok(listedSes.sessions.every((s) => !s.liveHere), "earlier scan predates s
     { get(t, k) { if (k in t) return t[k]; return hooks[k] ?? (() => {}); } },
   );
   let desc;
+  const fakeEl = () => ({
+    style: {}, setAttribute() {}, getAttribute: () => null, addEventListener() {},
+    appendChild() {}, remove() {}, matches: () => false,
+    querySelector: () => null, querySelectorAll: () => [],
+  });
   const sandbox = {
     window: { __ModuleLoader__: { load: (d) => (desc = d) } },
-    document: { body: { style: { getPropertyValue: () => "" } }, addEventListener() {}, removeEventListener() {} },
+    document: {
+      head: fakeEl(),
+      body: Object.assign(fakeEl(), { style: { getPropertyValue: () => "" } }),
+      createElement: fakeEl,
+      addEventListener() {},
+      querySelectorAll: () => [],
+    },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     setTimeout, clearTimeout, console,
   };

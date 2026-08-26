@@ -85,10 +85,13 @@ async function planDelete(args, env) {
     const rows = await scanSessions();
     const live = liveIds(env);
     const byKey = new Map(rows.map((r) => [`${r.workspace}/${r.sessionId}`, r]));
+    // Bare ids (the sidebar's session rows carry no workspace) also resolve;
+    // uuid collisions across workspaces are not a real case, last one wins.
+    const byBare = new Map(rows.map((r) => [r.sessionId, r]));
     const picked = [];
     const errors = [];
     for (const key of wanted) {
-        const row = byKey.get(String(key));
+        const row = byKey.get(String(key)) ?? byBare.get(String(key).replace(/^session-/, ""));
         if (!row) {
             errors.push(`"${key}" is not a known session directory (re-scan with list_sessions)`);
             continue;
