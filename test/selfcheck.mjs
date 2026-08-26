@@ -49,7 +49,11 @@ const ctx = {
   settings: { register: (ns) => ((settingsNs = ns), () => {}) },
   get: (key) => (key === "connection" ? ctx.connection : undefined),
   effect: (factory) => factory(),
-  inject(deps, fn) { fn(this); },
+  injectCbs: [],
+  inject(deps, fn) {
+    this.injectCbs.push(fn);
+    fn(this);
+  },
 };
 mod.apply(ctx, { mcpProfiles: ["testprof"] });
 tool = tools["manage_skills_mcps"];
@@ -546,7 +550,16 @@ writeFileSync(join(profDir, "package.json"), JSON.stringify({
   dependencies: {},
 }));
 
+// live detection: real Entries carry the package at .options.name and the row
+// id at .id (bare .name is undefined — that bug made every pill read "off").
+// Other modules' inject cbs expect their own scope shape — ignore their refire.
+const fireInject = (scope) => ctx.injectCbs.forEach((fn) => { try { fn(scope); } catch {} });
+fireInject({ loader: { entries: () => [{ options: { name: "my-plugin" } }, { id: "unrelated-row" }] } });
 let listedPlg = await run({ action: "list_plugins" });
+assert.ok(listedPlg.plugins.find((x) => x.id === "my-plugin")?.live, "options.name entry counts as live");
+assert.ok(!listedPlg.plugins.find((x) => x.id === "@deepseek-ai/modlens")?.live, "absent entry not live");
+fireInject({}); // back to no-loader for the rest of this section
+listedPlg = await run({ action: "list_plugins" });
 assert.equal(listedPlg.plugins.length, 3, "manifest bundles listed");
 assert.ok(listedPlg.plugins.every((x) => x.profile === "testprof" && x.bundled && !x.disabled), "rows healthy by default");
 

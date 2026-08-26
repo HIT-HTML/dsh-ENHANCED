@@ -898,15 +898,16 @@ function PluginsSection(p) {
 			e("td", { style: css.td }, m.profile),
 			e("td", { style: Object.assign({}, css.td, css.muted) }, source),
 			e("td", { style: css.td },
-				e("span", { style: css.pillText },
+				e("span", { title: "Loaded = this plugin's code is active in the GUI process right now. After a config change it updates when the profile recomposes.", style: css.pillText },
 					e("span", { style: css.dot(m.live ? GREEN : TERTIARY, !m.live) }),
-					m.live ? "live" : "off"),
+					m.live ? "loaded" : "not loaded"),
 				e("span", { style: css.muted }, "  ·  "),
-				op !== undefined
-					? e("span", { style: css.muted }, `(will ${op ? "enable" : "disable"})`)
-					: m.disabled
-						? e("span", { style: css.muted }, m.disabledByUs ? "disabled · dsh-enhanced" : "disabled")
-						: "enabled"),
+				e("span", { title: "Configured state on disk (cordis.patch.yml). Toggling rewrites this and the profile recomposes live.", style: css.muted },
+					op !== undefined
+						? `(will ${op ? "enable" : "disable"})`
+						: m.disabled
+							? m.disabledByUs ? "disabled · dsh-enhanced" : "disabled"
+							: "enabled")),
 			e("td", { style: Object.assign({}, css.td, css.tdActions) },
 				e("button", {
 					className: "dshx-btn",

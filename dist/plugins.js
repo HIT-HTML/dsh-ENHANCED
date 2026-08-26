@@ -89,11 +89,19 @@ export const handlePlugins = async function (action, args, env) {
     const { profiles } = env;
     switch (action) {
         case "list_plugins": {
+            // Loader Entries expose their package at .options.name and their
+            // composition-row id at .id (dump-verified: bundling "dshmarket"
+            // yields id "dsh-market", name "dshmarket"). Match on both.
             const liveNames = new Set();
             try {
                 for (const entry of env.loaderRef?.entries?.() ?? []) {
-                    if (typeof entry?.name === "string")
-                        liveNames.add(entry.name);
+                    const e = entry;
+                    if (typeof e?.name === "string")
+                        liveNames.add(e.name);
+                    if (typeof e?.options?.name === "string")
+                        liveNames.add(e.options.name);
+                    if (typeof e?.id === "string")
+                        liveNames.add(e.id);
                 }
             }
             catch { }
