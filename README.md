@@ -1,31 +1,44 @@
 # dsh-enhanced
 
+![CI](https://github.com/HIT-HTML/dsh-ENHANCED/actions/workflows/ci.yml/badge.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ![preview](https://github.com/user-attachments/assets/f20d6a19-2392-46c3-9a1a-358af8f123bc)
 
-One plugin that bundles the everyday upgrades DeepSeek Harness (DSH) lacks out of the box:
+**The everyday upgrades DeepSeek Harness (DSH) lacks out of the box — bundled into one plugin.**
+Free multi-engine web search with automatic fallbacks, persistent skill and MCP management, guarded session cleanup, and themes — all wired into a single Settings tab and one model tool. Ships prebuilt, so there's no build step between install and working; and it phones home to no one.
 
-- **Free web search** — a vendored multi-engine provider: DuckDuckGo ×2, Bing, AnySearch, SearXNG and SearXNG-compatible gateways, plus keyed engines (Exa, Tavily, Keenable, Perplexity, DeepSeek). Configured entirely from a Settings tab: live health checks for self-hosted instances, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy setups.
-- **Skills manager** — install/edit/remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder of skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
-- **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles.
-- **Plugin manager** — enable/disable any mounted plugin per profile by writing disable rows into the profile's patch file; boots watch that file and recompose live, so a toggle lands without a restart. Core plugins (`dsh-base`, `dsh-web-app`, `dsh-enhanced`) are hard-refused, and disabling an official `@deepseek-ai/*` plugin requires an explicit confirm.
-- **Session housekeeping** — move whole session directories from `~/.dsh/sessions/` into the operating system's own trash: macOS Finder Trash (`~/.Trash`), the FreeDesktop Trash on Linux (with `.trashinfo` metadata so desktops offer Restore), and the Recycle Bin on Windows (via PowerShell). If a native move fails, nothing is deleted — you get the exact error instead. In the sidebar itself, every session row grows a small trash-can icon on hover next to its ⋯ menu; it drives the same guarded pipeline. Deletion is dry-run first (plan + token), refuses sessions open in this process or active in the last 15 minutes (another window may still hold them), and restores by dragging the folder out of the trash (or moving it back under `~/.dsh/sessions/`).
-- **Auto-compact tuner** — clamp the context-compaction trigger below the harness default.
-- **Instance controls** — one-click shutdown/restart of the GUI process via icon buttons beside Settings in the sidebar foot.
-- **Themes** — original *ENHANCED* theme (phosphor-green terminal look, digital-rain boot intro) and a *Cyberpunk 2077* theme ported from the community theme.
+## ✨ What you get
 
-Single host composition plugin (`cordis.patch.yml` row), single model tool surface (`manage_skills_mcps`), single browser card (Settings → Plugins). No telemetry, no external services beyond the search engines themselves.
+- 🔍 **Free web search that keeps going** — a vendored multi-engine provider: DuckDuckGo ×2, Bing, AnySearch, SearXNG and SearXNG-compatible gateways, plus keyed engines (Exa, Tavily, Keenable, Perplexity, DeepSeek) waiting in the fallback chain when a free engine rate-limits you. Configured entirely from a Settings tab: live health checks for self-hosted instances, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy setups.
+- 🧩 **Skills manager** — install, edit, and remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder of skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
+- 🔌 **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles from one place.
+- 🎛️ **Plugin manager** — enable/disable any mounted plugin per profile by writing disable rows into the profile's patch file; boots watch that file and recompose live, so a toggle lands without a restart. Core plugins (`dsh-base`, `dsh-web-app`, `dsh-enhanced`) are hard-refused, and disabling an official `@deepseek-ai/*` plugin requires an explicit confirm.
+- 🗑️ **Session housekeeping you can trust** — move whole session directories from `~/.dsh/sessions/` into the operating system's own trash: macOS Finder Trash (`~/.Trash`), the FreeDesktop Trash on Linux (with `.trashinfo` metadata so desktops offer Restore), and the Recycle Bin on Windows (via PowerShell). Deletion is dry-run first (plan + token), refuses sessions open in this process or active in the last 15 minutes (another window may still hold them), and if a native move fails, nothing is deleted — you get the exact error instead. Restore is just dragging the folder back under `~/.dsh/sessions/`. In the sidebar itself, every session row grows a small trash-can icon on hover next to its ⋯ menu; it drives the same guarded pipeline.
+- 🧠 **Auto-compact tuner** — clamp the context-compaction trigger below the harness default, within a validated safe range.
+- 🔄 **Instance controls** — one-click shutdown/restart of the GUI process via icon buttons beside Settings in the sidebar foot.
+- 🎨 **Themes** — original *ENHANCED* theme (phosphor-green terminal look, digital-rain boot intro) and a *Cyberpunk 2077* theme ported from the community theme.
+
+One host composition plugin (`cordis.patch.yml` row), one model tool surface (`manage_skills_mcps`), one browser card (Settings → Plugins). No telemetry, no external services beyond the search engines themselves. Secrets get the same discipline: keys are written owner-only (`0600`) and never echoed back, action errors pass secret redaction before reaching the model, the UI, or a log, and destructive flows run dry-run-first behind confirm tokens — with a framework-free selfcheck suite gating every release in CI.
 
 ---
 
-## Install
+## 📦 Install & first run
+
+**Prerequisite:** a working DeepSeek Harness installation — this is a DSH plugin, not a standalone app.
+
+**1. Install** (one command):
 
 ```bash
-dsh plugin add https://github.com/HIT-HTML/dsh-ENHANCED   # or clone into a profile and add a composition row
+dsh plugin add https://github.com/HIT-HTML/dsh-ENHANCED
 ```
 
-The repo ships prebuilt `dist/` and `client.js`, so no build step is needed to install. To develop, see [Development](#development).
+The repo ships prebuilt `dist/` and `client.js`, so no build step is needed to install. To develop instead, see [Development](#-development).
 
-Plugin row (usually written for you by `dsh plugin add`):
+<details>
+<summary>Manual alternative — clone and add the row yourself</summary>
+
+Clone the repo anywhere you like, then add this row to the profile's `cordis.patch.yml` (usually written for you by `dsh plugin add`):
 
 ```yaml
 - id: dsh-enhanced
@@ -35,9 +48,21 @@ Plugin row (usually written for you by `dsh plugin add`):
     allowRestart: false               # opt-in for supervisor-assisted restarts
 ```
 
+</details>
+
+**2. Restart the profile** so the new composition row loads (plugins mount at boot).
+
+**3. Verify it's alive:**
+
+- The web GUI grows a **Settings → Plugins** card with sections for search, skills, MCP, plugins, sessions and themes.
+- Your agent gains one new model tool: `manage_skills_mcps`.
+- Optional smoke test: open Settings → Plugins → Search, pick an engine, hit Save, then ask your agent to run a web search.
+
+That's it — and note web search needs **zero configuration**: fresh installs default to the keyless Bing engine, so your agent can search the moment the profile boots. Visiting Settings → Plugins → Search is purely opt-in — for keyed engines, self-hosted SearXNG instances, exclusions, or cooldown tuning.
+
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 Two halves, standard DSH plugin shape:
 
@@ -90,7 +115,7 @@ To add a feature: new `src/<feature>.ts` exporting `ACTIONS` + `Handler`, two li
 
 ---
 
-## Feature reference
+## 📋 Feature reference
 
 | Module | Actions | Writes to |
 |---|---|---|
@@ -115,7 +140,7 @@ so a gateway echoing your key back inside an error message gets masked.
 
 ---
 
-## Search subsystem
+## 🌐 Search subsystem
 
 ### Provenance
 
@@ -227,7 +252,7 @@ Probe lives in `probeInstances()` (`src/search.ts`); statuses ride the `list_sea
 
 ---
 
-## Development
+## 🛠️ Development
 
 ```bash
 npm install
@@ -281,7 +306,7 @@ managed block via `splitBlock`/`writeFile`, guard-rails server-side. Then one `h
 
 ---
 
-## Privacy & security notes
+## 🔒 Privacy & security notes
 
 - No telemetry. The only outbound traffic is the searches you (or your agent) run.
 - API keys are stored in the profile's `cordis.patch.yml` and never sent back to the browser
@@ -289,7 +314,7 @@ managed block via `splitBlock`/`writeFile`, guard-rails server-side. Then one `h
 - The test bridge accepts **loopback requests only** (`isLoopbackRequest` guard) and redacts secrets.
 - Strings like `EXA123` in tests are deliberate fixtures, not credentials.
 
-## License
+## 📄 License
 
 MIT — see [LICENSE](LICENSE). Contains code vendored from
 [dsh-free-search](https://github.com/DDDMUC/dsh-free-search) (MIT, © DDDMUC) and theme work
