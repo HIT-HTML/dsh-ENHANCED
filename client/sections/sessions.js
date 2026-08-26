@@ -65,7 +65,7 @@ function SessionsSection(p) {
 			stagedBytes > 0 ? e("span", { style: css.chip }, `${draft.delSessions.length} staged · ${fmtBytes(stagedBytes)}`) : null),
 		openSes ? [
 			e("p", { key: "se-note", style: css.note },
-				"Stored conversation logs under ~/.dsh/sessions · Delete moves the whole directory into ~/.dsh/dsh-enhanced/trash (restore = move back). Open and recently-active sessions are refused."),
+				"Stored conversation logs under ~/.dsh/sessions · Delete moves the whole directory to the system trash (macOS: ~/ .Trash, Linux: ~/.local/share/Trash/files/, Windows: Recycle Bin). Restore via the OS trash. Open and recently-active sessions are refused."),
 			e("div", { key: "se-table", style: css.tableWrap },
 				e("table", { style: css.table },
 					e("thead", null, e("tr", null,
