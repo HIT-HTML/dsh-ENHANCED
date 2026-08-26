@@ -550,33 +550,43 @@ writeFileSync(join(profDir, "package.json"), JSON.stringify({
   dependencies: {},
 }));
 
-// live detection: real Entries carry the package at .options.name and the row
-// id at .id (bare .name is undefined — that bug made every pill read "off").
+// live detection + patch-id semantics: real Entries carry the package at
+// .options.name and their composition-row id at .id. Patch rows match by ENTRY
+// ID (dsh-app-boot applyEntryPatches), so a disable must write "- id:
+// my-entry", not the package name — package-name rows are skipped with a
+// "patch: entry not found" warning, which is why theme toggles were no-ops.
 // Other modules' inject cbs expect their own scope shape — ignore their refire.
 const fireInject = (scope) => ctx.injectCbs.forEach((fn) => { try { fn(scope); } catch {} });
-fireInject({ loader: { entries: () => [{ options: { name: "my-plugin" } }, { id: "unrelated-row" }] } });
+fireInject({ loader: { entries: () => [{ id: "my-entry", options: { name: "my-plugin" } }] } });
 let listedPlg = await run({ action: "list_plugins" });
 assert.ok(listedPlg.plugins.find((x) => x.id === "my-plugin")?.live, "options.name entry counts as live");
 assert.ok(!listedPlg.plugins.find((x) => x.id === "@deepseek-ai/modlens")?.live, "absent entry not live");
-fireInject({}); // back to no-loader for the rest of this section
-listedPlg = await run({ action: "list_plugins" });
 assert.equal(listedPlg.plugins.length, 3, "manifest bundles listed");
 assert.ok(listedPlg.plugins.every((x) => x.profile === "testprof" && x.bundled && !x.disabled), "rows healthy by default");
 
-// non-official toggle: lands in OUR block only, file stays a valid YAML array
+// non-official toggle: lands in OUR block keyed by the ENTRY id
 let tog = await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: false });
-assert.ok(tog.success, `disable my-plugin: ${JSON.stringify(tog)}`);
+assert.ok(tog.success && !tog.warning, `disable my-plugin resolves entry: ${JSON.stringify(tog)}`);
 let plgPatch = readFileSync(profPatch, "utf8");
-assert.ok(plgPatch.includes(PB) && /my-plugin/.test(plgPatch.split(PB)[1].split(PE)[0]), "row inside our markers");
+assert.ok(plgPatch.includes(PB) && /id: my-entry/.test(plgPatch.split(PB)[1].split(PE)[0]), "disable row uses composition id");
+assert.ok(!/id: my-plugin\b/.test(plgPatch.split(PB)[1].split(PE)[0]), "package-name row not written when resolvable");
 assert.ok(Array.isArray(yamlMod.load(plgPatch)), "patched file remains a valid YAML array");
 listedPlg = await run({ action: "list_plugins" });
 const myRow = listedPlg.plugins.find((x) => x.id === "my-plugin");
-assert.ok(myRow.disabled && myRow.disabledByUs, "list reflects our disable");
+assert.ok(myRow.disabled && myRow.disabledByUs, "list reflects our disable via entry id");
 
 tog = await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: true });
 assert.ok(tog.success, "re-enable succeeds");
 plgPatch = readFileSync(profPatch, "utf8");
 assert.ok(!plgPatch.includes(PB), "empty rows drop the block entirely");
+
+// no-loader fallback: package-name row plus an explicit warning
+fireInject({});
+tog = await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: false });
+assert.ok(tog.success && tog.warning?.includes("no live composition entry"), `fallback warns: ${JSON.stringify(tog)}`);
+plgPatch = readFileSync(profPatch, "utf8");
+assert.ok(/id: my-plugin/.test(plgPatch.split(PB)[1].split(PE)[0]), "fallback writes package-name row");
+await run({ action: "set_plugin_enabled", pluginId: "my-plugin", enabled: true });
 
 // guards: hard-refused ids never toggle (incl. dsh-enhanced itself), official
 // need confirm, unknown rejected

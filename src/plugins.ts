@@ -98,22 +98,34 @@ async function writeOurRows(profile: string, rows: Record<string, unknown>[]): P
   await writeFile(patchPath(profile), next, "utf8");
 }
 
+/** Live loader facts: package name -> composition-row ids mounting it, plus
+ * every entry id. Patch semantics (dsh-app-boot applyEntryPatches) match rows
+ * by ENTRY ID — a row keyed by package name warns "not found" and is skipped,
+ * so disables must target ids like "ui-theme-cyberpunk", not the package. */
+function liveIndex(loaderRef: any): { byPkg: Map<string, string[]>; ids: Set<string> } {
+  const byPkg = new Map<string, string[]>();
+  const ids = new Set<string>();
+  try {
+    for (const entry of loaderRef?.entries?.() ?? []) {
+      const e = entry as any;
+      const name = typeof e?.options?.name === "string" ? e.options.name : typeof e?.name === "string" ? e.name : undefined;
+      if (typeof e?.id !== "string") continue;
+      ids.add(e.id);
+      if (name) {
+        const list = byPkg.get(name) ?? [];
+        if (!list.includes(e.id)) list.push(e.id);
+        byPkg.set(name, list);
+      }
+    }
+  } catch {}
+  return { byPkg, ids };
+}
+
 export const handlePlugins: Handler = async function (action, args, env: Env) {
   const { profiles } = env;
   switch (action) {
     case "list_plugins": {
-      // Loader Entries expose their package at .options.name and their
-      // composition-row id at .id (dump-verified: bundling "dshmarket"
-      // yields id "dsh-market", name "dshmarket"). Match on both.
-      const liveNames = new Set<string>();
-      try {
-        for (const entry of env.loaderRef?.entries?.() ?? []) {
-          const e = entry as any;
-          if (typeof e?.name === "string") liveNames.add(e.name);
-          if (typeof e?.options?.name === "string") liveNames.add(e.options.name);
-          if (typeof e?.id === "string") liveNames.add(e.id);
-        }
-      } catch {}
+      const { byPkg, ids } = liveIndex(env.loaderRef);
       const plugins = [];
       for (const profile of profiles) {
         const [manifest, patch] = await Promise.all([readManifest(profile), readPatch(profile)]);
@@ -123,14 +135,18 @@ export const handlePlugins: Handler = async function (action, args, env: Env) {
         for (const id of [...manifest.bundles, ...manifest.dshDeps, ...ours.keys()]) {
           if (seen.has(id)) continue;
           seen.add(id);
+          // A bundle's disable row carries its composition id(s), so check
+          // those too: "- id: ui-theme-cyberpunk / disabled" disables the
+          // dsh-theme-cyberpunk2077 package.
+          const mounts = [id, ...(byPkg.get(id) ?? [])];
           plugins.push({
             profile,
             id,
             bundled: manifest.bundles.includes(id),
             installed: manifest.bundles.includes(id) || manifest.dshDeps.includes(id),
-            disabled: anyDisabled.has(id),
-            disabledByUs: ours.get(id) === true,
-            live: liveNames.has(id),
+            disabled: mounts.some((m) => anyDisabled.has(m)),
+            disabledByUs: mounts.some((m) => ours.get(m) === true),
+            live: ids.has(id) || byPkg.has(id),
           });
         }
       }
@@ -147,7 +163,12 @@ export const handlePlugins: Handler = async function (action, args, env: Env) {
         return { error: `disabling an official @deepseek-ai/* plugin can remove core surfaces; pass confirm: true to proceed` };
       }
       const targets = env.targets();
+      const { byPkg } = liveIndex(env.loaderRef);
+      // Rows this toggle owns: the package name AND every composition id that
+      // mounts it (enable removes all forms; disable replaces stale ones).
+      const mounts = [...new Set([id, ...(byPkg.get(id) ?? [])])];
       let touched = 0;
+      let unresolved = false;
       for (const profile of targets) {
         const [manifest, patch] = await Promise.all([readManifest(profile), readPatch(profile)]);
         const known = new Set([...manifest.bundles, ...manifest.dshDeps, ...ourDisabled(patch).keys(), ...allDisabledIds(patch)]);
@@ -155,15 +176,25 @@ export const handlePlugins: Handler = async function (action, args, env: Env) {
           return { error: `plugin "${id}" is not known in profile "${profile}" (installed, bundled, or already managed)` };
         }
         const rows = [...ourDisabled(patch).entries()]
-          .filter(([rowId]) => rowId !== id)
+          .filter(([rowId]) => !mounts.includes(rowId))
           .map(([rowId, disabled]) => ({ id: rowId, disabled }));
-        if (!enabled) rows.push({ id, disabled: true });
+        if (!enabled) {
+          if (byPkg.get(id)?.length) for (const entryId of byPkg.get(id)!) rows.push({ id: entryId, disabled: true });
+          else {
+            // No live loader here to resolve the composition id (other-profile
+            // targeting): fall back to the package name, which the loader only
+            // honors if an entry actually carries that id.
+            rows.push({ id, disabled: true });
+            unresolved = true;
+          }
+        }
         await writeOurRows(profile, rows);
         touched++;
       }
       return {
         success: true,
         enabled,
+        ...(unresolved ? { warning: `no live composition entry found for "${id}" — wrote a package-name row that may not match; verify in the dump` } : {}),
         message:
           `${enabled ? "Enabled" : "Disabled"} "${id}" in ${touched} profile(s). ` +
           `Profile boots watch cordis.patch.yml and recompose live — no restart needed; refresh browser surfaces to see it.`,
