@@ -1,6 +1,6 @@
 {
 	"name": "dsh-enhanced",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Everyday upgrades for DeepSeek Harness in one plugin: vendored multi-engine free web search (with self-hosted SearXNG support), persistent skills and MCP server management, auto-compact tuning, instance controls, and Matrix/Cyberpunk themes",
 	"type": "module",
 	"main": "dist/index.js",
