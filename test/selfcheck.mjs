@@ -656,5 +656,59 @@ const liveRes = await run({ action: "delete_sessions", sessionIds: ["ws-b/old2"]
 assert.ok(liveRes.error && liveRes.error.includes("open in this process"), "live session refused");
 assert.ok(listedSes.sessions.every((s) => !s.liveHere), "earlier scan predates store exposure");
 
+// ── client bundle boots: execute the built client.js with stubbed browser
+// globals, drive apply() through mocked slot injection, and render every
+// registered component with a mini element-walker that CALLS function
+// components — so a reference error in any section body fails here instead of
+// only in the browser.
+{
+  const vm = await import("node:vm");
+  const hooks = {
+    useState: (init) => [typeof init === "function" ? init() : init, () => {}],
+    useEffect: () => {},
+    useRef: (v) => ({ current: v }),
+    useMemo: (fn) => fn(),
+    useCallback: (fn) => fn,
+  };
+  const ReactStub = new Proxy(
+    { createElement: (type, props, ...kids) => ({ type, props: props || {}, kids }), Fragment: "fragment" },
+    { get(t, k) { if (k in t) return t[k]; return hooks[k] ?? (() => {}); } },
+  );
+  let desc;
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (d) => (desc = d) } },
+    document: { body: { style: { getPropertyValue: () => "" } }, addEventListener() {}, removeEventListener() {} },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    setTimeout, clearTimeout, console,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL("../client.js", import.meta.url), "utf8"), sandbox, { filename: "client.js" });
+  assert.ok(desc && typeof desc.factory === "function", "client bundle registers via __ModuleLoader__");
+  const plugin = desc.factory((name) => (name === "react" ? ReactStub : undefined));
+  const registered = [];
+  plugin.apply({
+    inject(_deps, cb) {
+      cb({ slots: {
+        inject(_slot, genFn) { [...genFn()]; },
+        register: (d, comp) => (registered.push(comp), {}),
+      } });
+    },
+    get: () => undefined,
+  });
+  assert.ok(registered.length >= 2, `card + sidebar controls registered (got ${registered.length})`);
+  const baseProps = { open: true, busy: false, call: async () => ({}), patch: () => {}, draft: {} };
+  const walk = (el, depth) => {
+    if (!el || typeof el !== "object" || depth > 12) return;
+    if (typeof el.type === "function") {
+      try { walk(el.type(Object.assign({}, baseProps, el.props)), depth + 1); }
+      catch (err) { throw new Error(`component ${el.type.name || "?"} threw: ${err.message}`); }
+      return;
+    }
+    for (const k of el.kids || []) walk(k, depth);
+    if (el.props && el.props.children !== undefined) for (const k of [].concat(el.props.children)) walk(k, depth);
+  };
+  for (const comp of registered) walk(comp(baseProps), 0);
+}
+
 rmSync(home, { recursive: true, force: true });
 console.log("selfcheck OK");

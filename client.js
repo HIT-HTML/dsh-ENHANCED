@@ -69,6 +69,10 @@ window.__ModuleLoader__.load({
 			.dshx-tbody tr:hover > td { background-color: color-mix(in srgb, currentColor 4%, transparent); }
 			.dshx-tbody tr:last-child > td { border-bottom: none; }
 			textarea.dshx-input { resize: vertical; min-height: 34px; font-family: inherit; }
+			.dshx-menuitem { transition: background-color .15s; text-align: left; width: 100%; }
+			.dshx-menuitem:hover:not(:disabled) { background-color: var(--dsw-alias-bg-layer-3, rgba(127,127,127,0.08)); }
+			.dshx-menuitem:disabled { opacity: .45; cursor: default !important; }
+			.dshx-menuitem:focus-visible { outline: 2px solid var(--dsw-alias-label-primary, currentColor); outline-offset: -2px; }
 		`;
 
 		const css = {
@@ -112,6 +116,16 @@ window.__ModuleLoader__.load({
 			footer: { borderTop: `1px solid ${BORDER}`, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "8px", padding: "14px 0 4px" },
 			statusSpan: { marginRight: "auto", fontSize: "12px", color: TERTIARY },
 			saveMin: { minWidth: "80px", textAlign: "center" },
+			// Overflow-menu pattern (⋯): quiet rows, actions behind a popover.
+			menuWrap: { position: "relative", display: "inline-block" },
+			menu: {
+				position: "absolute", right: "0", top: "calc(100% + 4px)", zIndex: 30,
+				minWidth: "200px", padding: "4px", display: "flex", flexDirection: "column", gap: "2px",
+				background: "var(--dsw-alias-bg-layer-2, rgba(24,24,28,0.98))", border: `1px solid ${BORDER}`,
+				borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+			},
+			menuItem: { appearance: "none", font: "inherit", fontSize: "12.5px", lineHeight: 1.4, border: "none", background: "transparent", color: SECONDARY, borderRadius: "7px", padding: "7px 10px" },
+			menuSub: { display: "block", fontSize: "11px", marginTop: "2px", color: TERTIARY },
 		};
 		// Primary (filled) button, matching the card footer pair modsearch
 		// renders; built per use since it carries no per-instance state.
@@ -975,7 +989,18 @@ SAVE_STEPS.push(async (call, rem) => {
 function SessionsSection(p) {
 	const [openSes, setOpenSes] = React.useState(false);
 	const [query, setQuery] = React.useState("");
+	const [menuKey, setMenuKey] = React.useState(null); // which row's ⋯ menu is open
 	const { draft } = p;
+
+	// One open menu at a time; outside click or Escape closes it.
+	React.useEffect(() => {
+		if (!menuKey) return;
+		const close = () => setMenuKey(null);
+		const onKey = (ev) => { if (ev.key === "Escape") close(); };
+		document.addEventListener("click", close);
+		document.addEventListener("keydown", onKey);
+		return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", onKey); };
+	}, [menuKey]);
 
 	const toggleDel = (key) => {
 		const has = draft.delSessions.includes(key);
@@ -1003,14 +1028,34 @@ function SessionsSection(p) {
 					e("span", { style: css.dot(s.liveHere ? GREEN : TERTIARY, !s.liveHere) }),
 					s.liveHere ? "open here" : "idle " + fmtIdle(s.minutesIdle))),
 			e("td", { style: Object.assign({}, css.td, css.tdActions) },
-				e("button", {
-					className: staged ? "dshx-btn" : "dshx-btn dshx-danger",
-					style: Object.assign({}, staged ? css.btn : css.btnDanger, css.btnSm),
-					disabled: p.busy || (!staged && blocked),
-					title: blocked && !s.liveHere ? "Active recently — the host refuses sessions idle under 15 minutes." : "",
-					onClick: () => toggleDel(key),
-				}, staged ? "Keep" : "Delete"),
-			),
+				e("span", { style: css.menuWrap },
+					e("button", {
+						className: "dshx-btn",
+						style: Object.assign({}, css.btn, css.btnSm, { minWidth: "30px", padding: "3px 8px" }),
+						"aria-label": `Actions for ${key}`,
+						"aria-haspopup": "menu",
+						"aria-expanded": menuKey === key ? "true" : "false",
+						title: "Actions",
+						disabled: p.busy,
+						onClick: (ev) => { ev.stopPropagation(); setMenuKey(menuKey === key ? null : key); },
+					}, "⋯"),
+					menuKey === key ? e("div", { style: css.menu, role: "menu", onClick: (ev) => ev.stopPropagation() },
+						e("button", {
+							className: "dshx-menuitem",
+							role: "menuitem",
+							style: Object.assign({}, css.menuItem, staged ? null : { color: RED }),
+							disabled: p.busy || (!staged && blocked),
+							title: !staged && blocked
+								? (s.liveHere ? "Open in this instance — the host refuses it." : "Active recently — sessions idle under 15 minutes are refused.")
+								: "",
+							onClick: () => { toggleDel(key); setMenuKey(null); },
+						},
+							staged ? "Undo delete" : "Delete session…",
+							!staged && blocked
+								? e("span", { style: css.menuSub }, s.liveHere ? "open here" : `idle ${fmtIdle(s.minutesIdle)}`)
+								: null,
+						),
+					) : null)),
 		);
 	});
 
@@ -3185,9 +3230,8 @@ function applyThemeWith(ctx, themeService, id) {
 	// the same row as Settings (slot "sidebar.footer.action"), working in the
 	// expanded sidebar and the collapsed rail alike. Shutdown is permanently
 	// red so the destructive one is never mistaken for the mundane one.
-	// Two-click inline confirm — first click arms (tint + tooltip flips),
-	// second executes; auto-disarms so a stray click can't leave a loaded
-	// destructive control in the chrome.
+	// One click fires immediately (user request) — no arm/confirm stage; while
+	// a request is in flight both buttons disable so nothing double-fires.
 	const FOOT_CSS = `
 		.dshx-foot-btn { appearance: none; background: none; border: 0; border-radius: 8px;
 			padding: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
@@ -3197,9 +3241,9 @@ function applyThemeWith(ctx, themeService, id) {
 			background: var(--dsw-alias-bg-layer-3, rgba(127,127,127,.08)); }
 		.dshx-foot-btn:focus-visible { outline: 2px solid var(--dsw-alias-label-primary, currentColor); outline-offset: 1px; }
 		.dshx-foot-btn:disabled { opacity: .45; cursor: default !important; }
-		.dshx-foot-restart:hover:not(:disabled), .dshx-foot-restart[data-armed="1"] { color: #e05252; }
+		.dshx-foot-restart:hover:not(:disabled) { color: #e05252; }
 		.dshx-foot-shutdown { color: #e05252; }
-		.dshx-foot-shutdown:hover:not(:disabled), .dshx-foot-shutdown[data-armed="1"] { color: #ff7070;
+		.dshx-foot-shutdown:hover:not(:disabled) { color: #ff7070;
 			background: rgba(224,82,82,.12); }
 	`;
 	const ICON_PATHS = {
@@ -3214,16 +3258,8 @@ function applyThemeWith(ctx, themeService, id) {
 	};
 	function InstanceIcons(ctx) {
 		return function InstanceButtons() {
-			const [armed, setArmed] = React.useState(""); // "" | "restart" | "shutdown"
 			const [busy, setBusy] = React.useState("");
-			React.useEffect(() => {
-				if (!armed) return;
-				const t = setTimeout(() => setArmed(""), 4000);
-				return () => clearTimeout(t);
-			}, [armed]);
 			const fire = (kind) => {
-				if (armed !== kind) { setArmed(kind); return; }
-				setArmed("");
 				setBusy(kind); // success = process dying; stay disabled
 				rpcCall(ctx, { action: kind === "restart" ? "restart_instance" : "shutdown_instance" })
 					.catch(() => setBusy(""));
@@ -3231,12 +3267,10 @@ function applyThemeWith(ctx, themeService, id) {
 			const button = (kind) => {
 				const isRestart = kind === "restart";
 				const tip = busy ? (isRestart ? "Restarting…" : "Shutting down…")
-					: armed === kind ? "Click again to confirm"
 					: isRestart ? "Restart DSH" : "Shut down DSH";
 				return e("button", {
 					type: "button",
 					className: "dshx-foot-btn dshx-foot-" + kind,
-					"data-armed": armed === kind ? "1" : undefined,
 					title: tip, "aria-label": tip,
 					disabled: busy !== "" && busy !== kind,
 					onClick: () => fire(kind),

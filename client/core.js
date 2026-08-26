@@ -67,6 +67,10 @@ window.__ModuleLoader__.load({
 			.dshx-tbody tr:hover > td { background-color: color-mix(in srgb, currentColor 4%, transparent); }
 			.dshx-tbody tr:last-child > td { border-bottom: none; }
 			textarea.dshx-input { resize: vertical; min-height: 34px; font-family: inherit; }
+			.dshx-menuitem { transition: background-color .15s; text-align: left; width: 100%; }
+			.dshx-menuitem:hover:not(:disabled) { background-color: var(--dsw-alias-bg-layer-3, rgba(127,127,127,0.08)); }
+			.dshx-menuitem:disabled { opacity: .45; cursor: default !important; }
+			.dshx-menuitem:focus-visible { outline: 2px solid var(--dsw-alias-label-primary, currentColor); outline-offset: -2px; }
 		`;
 
 		const css = {
@@ -110,6 +114,16 @@ window.__ModuleLoader__.load({
 			footer: { borderTop: `1px solid ${BORDER}`, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "8px", padding: "14px 0 4px" },
 			statusSpan: { marginRight: "auto", fontSize: "12px", color: TERTIARY },
 			saveMin: { minWidth: "80px", textAlign: "center" },
+			// Overflow-menu pattern (⋯): quiet rows, actions behind a popover.
+			menuWrap: { position: "relative", display: "inline-block" },
+			menu: {
+				position: "absolute", right: "0", top: "calc(100% + 4px)", zIndex: 30,
+				minWidth: "200px", padding: "4px", display: "flex", flexDirection: "column", gap: "2px",
+				background: "var(--dsw-alias-bg-layer-2, rgba(24,24,28,0.98))", border: `1px solid ${BORDER}`,
+				borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+			},
+			menuItem: { appearance: "none", font: "inherit", fontSize: "12.5px", lineHeight: 1.4, border: "none", background: "transparent", color: SECONDARY, borderRadius: "7px", padding: "7px 10px" },
+			menuSub: { display: "block", fontSize: "11px", marginTop: "2px", color: TERTIARY },
 		};
 		// Primary (filled) button, matching the card footer pair modsearch
 		// renders; built per use since it carries no per-instance state.

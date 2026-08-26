@@ -48,9 +48,8 @@ function applyThemeWith(ctx, themeService, id) {
 	// the same row as Settings (slot "sidebar.footer.action"), working in the
 	// expanded sidebar and the collapsed rail alike. Shutdown is permanently
 	// red so the destructive one is never mistaken for the mundane one.
-	// Two-click inline confirm — first click arms (tint + tooltip flips),
-	// second executes; auto-disarms so a stray click can't leave a loaded
-	// destructive control in the chrome.
+	// One click fires immediately (user request) — no arm/confirm stage; while
+	// a request is in flight both buttons disable so nothing double-fires.
 	const FOOT_CSS = `
 		.dshx-foot-btn { appearance: none; background: none; border: 0; border-radius: 8px;
 			padding: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
@@ -60,9 +59,9 @@ function applyThemeWith(ctx, themeService, id) {
 			background: var(--dsw-alias-bg-layer-3, rgba(127,127,127,.08)); }
 		.dshx-foot-btn:focus-visible { outline: 2px solid var(--dsw-alias-label-primary, currentColor); outline-offset: 1px; }
 		.dshx-foot-btn:disabled { opacity: .45; cursor: default !important; }
-		.dshx-foot-restart:hover:not(:disabled), .dshx-foot-restart[data-armed="1"] { color: #e05252; }
+		.dshx-foot-restart:hover:not(:disabled) { color: #e05252; }
 		.dshx-foot-shutdown { color: #e05252; }
-		.dshx-foot-shutdown:hover:not(:disabled), .dshx-foot-shutdown[data-armed="1"] { color: #ff7070;
+		.dshx-foot-shutdown:hover:not(:disabled) { color: #ff7070;
 			background: rgba(224,82,82,.12); }
 	`;
 	const ICON_PATHS = {
@@ -77,16 +76,8 @@ function applyThemeWith(ctx, themeService, id) {
 	};
 	function InstanceIcons(ctx) {
 		return function InstanceButtons() {
-			const [armed, setArmed] = React.useState(""); // "" | "restart" | "shutdown"
 			const [busy, setBusy] = React.useState("");
-			React.useEffect(() => {
-				if (!armed) return;
-				const t = setTimeout(() => setArmed(""), 4000);
-				return () => clearTimeout(t);
-			}, [armed]);
 			const fire = (kind) => {
-				if (armed !== kind) { setArmed(kind); return; }
-				setArmed("");
 				setBusy(kind); // success = process dying; stay disabled
 				rpcCall(ctx, { action: kind === "restart" ? "restart_instance" : "shutdown_instance" })
 					.catch(() => setBusy(""));
@@ -94,12 +85,10 @@ function applyThemeWith(ctx, themeService, id) {
 			const button = (kind) => {
 				const isRestart = kind === "restart";
 				const tip = busy ? (isRestart ? "Restarting…" : "Shutting down…")
-					: armed === kind ? "Click again to confirm"
 					: isRestart ? "Restart DSH" : "Shut down DSH";
 				return e("button", {
 					type: "button",
 					className: "dshx-foot-btn dshx-foot-" + kind,
-					"data-armed": armed === kind ? "1" : undefined,
 					title: tip, "aria-label": tip,
 					disabled: busy !== "" && busy !== kind,
 					onClick: () => fire(kind),
