@@ -10,7 +10,7 @@
  * Local adaptations vs upstream:
  *   - settings namespace renamed  "free-search"           -> "enhanced-free-search"
  *   - HTTP bridge prefix renamed  /api/dsh-free-search-settings -> /api/dsh-enhanced-free-search
- *   - search provider id renamed  "ddg"                   -> "enhanced-free"
+ *   - search provider id kept "ddg" (matches harness config; upstream renamed to avoid collision)
  *     (all three avoid collisions when the standalone plugin is loaded too)
  *   - installSettingsSection() call removed: dsh-enhanced's own Search tab
  *     owns configuration UX; engine config arrives via apply(scope, cfg)
@@ -1307,7 +1307,7 @@ function apply(ctx, config) {
   // 任何引擎失败（缺 key / 401 / 限流 / 网络）都会自动轮流尝试下一个引擎，
   // 直到成功或全部失败。并在结果里附带回退提示，避免 agent 搜索直接失败。
   const provider = {
-    id: "enhanced-free",
+    id: "ddg",
     available() {
       return true;
     },

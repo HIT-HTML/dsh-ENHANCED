@@ -11,6 +11,7 @@ Free multi-engine web search with automatic fallbacks, persistent skill and MCP 
 ## ✨ What you get
 
 - 🔍 **Free web search that keeps going** — a vendored multi-engine provider: DuckDuckGo ×2, Bing, AnySearch, SearXNG and SearXNG-compatible gateways, plus keyed engines (Exa, Tavily, Keenable, Perplexity, DeepSeek) waiting in the fallback chain when a free engine rate-limits you. Configured entirely from a Settings tab: live health checks for self-hosted instances, per-engine exclusions, failure cooldowns that survive restarts, and endpoint overrides for proxy setups.
+- 🌐 **`web_fetch` — URL content retrieval** — fetches any HTTP(S) URL and returns the content as markdown (HTML pages are stripped to readable text). Bypasses the harness's `ctx.web.fetch` seam when no fetch provider is registered in the active profile, using Node's built-in `fetch` directly instead. 20 s timeout, up to 5 redirect hops, 256 KB response guard.
 - 🧩 **Skills manager** — install, edit, and remove agent `SKILL.md` skills persistently. Installs accept a single skill or a folder of skills (disk path or browser folder-picker alike), keep bundled `scripts/` executable (browsers drop permission bits; shebang files are restored to 0755), and report per-skill results so one bad bundle never blocks the rest.
 - 🔌 **MCP server manager** — manage `@deepseek-ai/dsh-mcp-client` rows across profiles from one place.
 - 🎛️ **Plugin manager** — enable/disable any mounted plugin per profile by writing disable rows into the profile's patch file; boots watch that file and recompose live, so a toggle lands without a restart. Core plugins (`dsh-base`, `dsh-web-app`, `dsh-enhanced`) are hard-refused, and disabling an official `@deepseek-ai/*` plugin requires an explicit confirm.
@@ -126,6 +127,7 @@ To add a feature: new `src/<feature>.ts` exporting `ACTIONS` + `Handler`, two li
 | plugins | `list_plugins, set_plugin_enabled` | managed `:plugins:` block |
 | sessions | `list_sessions, delete_sessions` | moves session dirs to trash |
 | search | `list_search, set_search` | managed `:search:` block |
+| fetch | `web_fetch` | — (calls Node built-in `fetch` directly) |
 
 Client-side, each feature is a *section* plugged into three registries in `core.js`:
 `DRAFT_SHAPES` (form state), `DIRTY_CHECKS` (unsaved chip), `SAVE_STEPS` (replay on Save).
@@ -155,7 +157,7 @@ Local adaptations vs upstream (all collision-safety or de-branding):
 |---|---|---|
 | settings namespace | `free-search` | `enhanced-free-search` |
 | bridge prefix | `/api/dsh-free-search-settings` | `/api/dsh-enhanced-free-search` |
-| search provider id | `ddg` | `enhanced-free` |
+| search provider id | `ddg` | `ddg` (reverted from `enhanced-free`; harness config expects `ddg`) |
 | settings UI section | installed its own card | removed — our Search tab owns config UX |
 | self-update machinery | check-update + `pnpm add` upgrade routes | removed — a vendored copy must not reinstall upstream over itself |
 | agent-visible strings | "Settings > Plugins > Free Search" | point at this plugin's Search section |
@@ -170,7 +172,7 @@ Settings→Search tab ────┘         │
                                   ▼
                     ctx.inject(["web"], scope => freeSearch.apply(scope, cfg))
                                   │
-                    registers provider id "enhanced-free",
+                    registers provider id "ddg",
                     agent tools, system-prompt section, bridge routes
                                   │
                                   ▼

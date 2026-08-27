@@ -15,6 +15,7 @@
 import { handleSkills, SKILL_ACTIONS } from "./skills.js";
 import { handleMcp, MCP_ACTIONS } from "./mcp.js";
 import { handleCompact, COMPACT_ACTIONS } from "./compact.js";
+import { handleFetch, FETCH_ACTIONS, registerFetchTool } from "./fetch.js";
 import { handleInstance, INSTANCE_ACTIONS } from "./instance.js";
 import { handlePlugins, PLUGIN_ACTIONS } from "./plugins.js";
 import { handleSessions, SESSIONS_ACTIONS } from "./sessions.js";
@@ -26,10 +27,10 @@ import { scrubSecrets } from "./shared.js";
 // Disk-format helper embedders may reuse (test suite included).
 export { parseSkillDoc } from "./skills.js";
 
-const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...PLUGIN_ACTIONS, ...SESSIONS_ACTIONS, ...SEARCH_ACTIONS] as const;
+const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...PLUGIN_ACTIONS, ...SESSIONS_ACTIONS, ...SEARCH_ACTIONS, ...FETCH_ACTIONS] as const;
 
 /** Feature modules in dispatch order. */
-const HANDLERS: Handler[] = [handleSkills, handleMcp, handleCompact, handleInstance, handlePlugins, handleSessions, handleSearch];
+const HANDLERS: Handler[] = [handleSkills, handleMcp, handleCompact, handleInstance, handlePlugins, handleSessions, handleSearch, handleFetch];
 
 export const name = "dsh-enhanced";
 export const inject = ["tools", "skills", "connection"];
@@ -165,6 +166,9 @@ export function apply(ctx: any, config?: { mcpProfiles?: string[]; allowRestart?
 
   // Thin search tool: delegates to the active web search provider (Free Search).
   registerSearchTool(ctx);
+
+  // web_fetch tool: retrieves HTTP(S) URLs via harness's ctx.web.fetch.
+  registerFetchTool(ctx);
 
   // Built-in Free Search engine (vendored): registers the search provider, its
   // agent tools and a loopback test bridge whenever the harness `web` service
