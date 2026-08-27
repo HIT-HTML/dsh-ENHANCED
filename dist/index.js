@@ -22,6 +22,21 @@ import { handleSessions, SESSIONS_ACTIONS } from "./sessions.js";
 import { handleSearch, SEARCH_ACTIONS, registerSearchTool, readSearchConfig } from "./search.js";
 import * as freeSearch from "./free-search-vendor.js";
 import { scrubSecrets } from "./shared.js";
+// Auto-config: one name (ddg) for harness compatibility. Ponytail: writes at
+// boot, idempotent, no watch — upgrade path is settings-service integration.
+const SETTINGS_PATH = (process.env.DSH_HOME ? process.env.DSH_HOME + "/.dsh" : process.env.HOME + "/.dsh") + "/settings.yaml";
+function ensureDdgConfig() {
+    try {
+        const fs = require("fs");
+        let s = fs.existsSync(SETTINGS_PATH) ? fs.readFileSync(SETTINGS_PATH, "utf8") : "";
+        if (!s.includes("free-search:"))
+            s += "\nfree-search:\n  provider: ddg\n  lang: en\n";
+        else if (!s.includes("provider: ddg"))
+            s = s.replace(/free-search:[\s\S]*?provider: .*/, (m) => m.replace(/provider: .*/, "provider: ddg"));
+        fs.writeFileSync(SETTINGS_PATH, s);
+    }
+    catch (e) { /* silent — config write is best-effort */ }
+}
 // Disk-format helper embedders may reuse (test suite included).
 export { parseSkillDoc } from "./skills.js";
 const ACTIONS = [...SKILL_ACTIONS, ...MCP_ACTIONS, ...COMPACT_ACTIONS, ...INSTANCE_ACTIONS, ...PLUGIN_ACTIONS, ...SESSIONS_ACTIONS, ...SEARCH_ACTIONS, ...FETCH_ACTIONS];
@@ -30,6 +45,7 @@ const HANDLERS = [handleSkills, handleMcp, handleCompact, handleInstance, handle
 export const name = "dsh-enhanced";
 export const inject = ["tools", "skills", "connection"];
 export function apply(ctx, config) {
+    ensureDdgConfig(); // ponytail: best-effort, idempotent, no watch; upgrade to Settings service
     // Profiles whose cordis.patch.yml receives managed rows.
     const profiles = config?.mcpProfiles ?? ["default", "web"];
     // Live MCP state reads the cordis loader (fiber liveness). It is optional:
