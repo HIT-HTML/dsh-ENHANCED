@@ -62,7 +62,7 @@ tool = tools["manage_skills_mcps"];
 
 // Vendored Free Search engine registers through the harness web service.
 assert.ok(searchProvider, "vendored search provider registered");
-assert.equal(searchProvider.id, "enhanced-free", "provider id is namespaced");
+assert.equal(searchProvider.id, "ddg", "provider id is namespaced");
 assert.equal(typeof searchProvider.search, "function", "provider exposes search()");
 // Bridge routes must be fully formed: one undefined path here once made the
 // second duplicate-undefined registration throw and kill ALL route registrations
